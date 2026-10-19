@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Dashboard Guru - Quiz Duel</title>
+<link rel="stylesheet" href="/app.css">
+<style>
+  .admin-container { max-width: 900px; margin: 0 auto; padding: 20px; }
+  .stats-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+  .stat-card { background: #1e293b; padding: 16px; border-radius: 12px; text-align: center; }
+  .stat-card h3 { font-size: 13px; color: #94a3b8; margin-bottom: 8px; }
+  .stat-card .value { font-size: 24px; font-weight: bold; color: #3b82f6; }
+  .table-wrap { overflow-x: auto; background: #1e293b; border-radius: 12px; padding: 10px; }
+  table { width: 100%; border-collapse: collapse; text-align: left; }
+  th { padding: 12px; font-size: 13px; color: #94a3b8; border-bottom: 1px solid #334155; }
+  td { padding: 12px; font-size: 14px; border-bottom: 1px solid #334155; }
+  .bank-selector { background: #1e293b; padding: 16px; border-radius: 12px; margin-bottom: 20px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  select { padding: 10px; border-radius: 8px; background: #0f172a; color: white; border: 1px solid #334155; font-size: 15px; }
+</style>
+</head>
+<body>
+
+<div class="admin-container">
+  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+    <h1 style="font-size: 20px;">👨‍🏫 Dashboard Guru</h1>
+    <button class="btn-logout" onclick="logout()">Logout</button>
+  </div>
+
+  <!-- Statistik -->
+  <div class="stats-grid">
+    <div class="stat-card">
+      <h3>Total Siswa</h3>
+      <div class="value" id="stat-students">-</div>
+    </div>
+    <div class="stat-card">
+      <h3>Total Duel Dimainkan</h3>
+      <div class="value" id="stat-matches">-</div>
+    </div>
+    <div class="stat-card">
+      <h3>Bank Soal Aktif</h3>
+      <div class="value" id="stat-bank" style="color: #fbbf24;">-</div>
+    </div>
+  </div>
+
+  <!-- Ganti Bank Soal -->
+  <div class="bank-selector">
+    <div style="font-weight: bold;">Ganti Bank Soal Aktif:</div>
+    <select id="bank-dropdown" onchange="changeBank(this.value)">
+      <option value="1">Bank 1: C++ Dasar</option>
+      <option value="2">Bank 2</option>
+      <option value="3">Bank 3</option>
+      <option value="4">Bank 4</option>
+      <option value="5">Bank 5</option>
+    </select>
+  </div>
+
+  <!-- Tabel Siswa -->
+  <h2 style="font-size: 16px; margin-bottom: 10px;">Data Siswa (Berdasarkan Poin)</h2>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Nama Asli</th>
+          <th>Username</th>
+          <th>Kelas</th>
+          <th>Poin</th>
+          <th>Main</th>
+          <th>Akurasi Jawaban</th>
+        </tr>
+      </thead>
+      <tbody id="student-list">
+        <tr><td colspan="6" style="text-align: center;">Memuat data...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+async function init() {
+  const r = await fetch('/api/me');
+  if (!r.ok) return location.href = '/';
+  const me = await r.json();
+  if (!me.is_teacher) return location.href = '/lobby';
+
+  loadStats();
+  loadStudents();
+}
+
+async function loadStats() {
+  const r = await fetch('/api/admin/stats');
+  const data = await r.json();
+  
+  document.getElementById('stat-students').textContent = data.students;
+  document.getElementById('stat-matches').textContent = data.matches;
+  document.getElementById('stat-bank').textContent = data.activeBank.name;
+  
+  const dropdown = document.getElementById('bank-dropdown');
+  if (dropdown) dropdown.value = data.activeBank.active_bank_id;
+}
+
+async function loadStudents() {
+  const r = await fetch('/api/admin/students');
+  const data = await r.json();
+  
+  const tbody = document.getElementById('student-list');
+  tbody.innerHTML = '';
+  
+  if (data.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align: center;">Belum ada siswa yang mendaftar.</td></tr>';
+    return;
+  }
+
+  data.forEach(s => {
+    const akurasi = s.total_answered > 0 ? Math.round((s.correct / s.total_answered) * 100) + '%' : '-';
+    tbody.innerHTML += `
+      <tr>
+        <td style="font-weight: bold; color: #f87171;">${s.full_name}</td>
+        <td style="color: #60a5fa;">${s.username}</td>
+        <td>${s.class_code || '-'}</td>
+        <td><b>${s.rating}</b></td>
+        <td>${s.matches_played}</td>
+        <td style="color: #4ade80;">${akurasi} <span style="font-size:11px;color:#94a3b8;">(${s.correct}/${s.total_answered})</span></td>
+      </tr>
+    `;
+  });
+}
+
+async function changeBank(bankId) {
+  if (!confirm('Ganti bank soal aktif? Siswa yang sedang bermain tidak akan terganggu.')) {
+    loadStats(); // Kembalikan dropdown
+    return;
+  }
+  
+  const r = await fetch('/api/admin/set-bank', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ bankId: Number(bankId) })
+  });
+  
+  if (r.ok) {
+    alert('Bank soal berhasil diubah!');
+    loadStats();
+  } else {
+    alert('Gagal mengganti bank soal.');
+  }
+}
+
+async function logout() {
+  await fetch('/api/logout', { method: 'POST' });
+  location.href = '/';
+}
+
+init();
+</script>
+</body>
+</html>

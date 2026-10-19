@@ -15,14 +15,12 @@ app.use(express.json());
 app.use(cookieParser());
 app.use(express.static('public'));
 
-// Auto-migrate
 pool.query('ALTER TABLE students ADD COLUMN IF NOT EXISTS session_token TEXT').catch(e => console.log(e.message));
 
 // --- AUTH & PROFIL ---
 app.post('/api/register', async (req, res) => {
   const { username, password, fullName, classCode } = req.body;
   if (!username || !password || !fullName) return res.status(400).json({ error: 'Data kurang' });
-  
   if (/\s/.test(username)) return res.status(400).json({ error: 'Username tidak boleh mengandung spasi' });
 
   try {
@@ -33,12 +31,12 @@ app.post('/api/register', async (req, res) => {
     const token = uuid();
     const hash = bcrypt.hashSync(password, 10);
     
-    await pool.query('INSERT INTO students (id, username, password_hash, full_name, class_code, created_at, session_token) VALUES ($1,$2,$3,$4,$5,$6,$7)',
+    await pool.query('INSERT INTO students (id, username, password_hash, full_name, class_code, created_at, session_token, is_teacher) VALUES ($1,$2,$3,$4,$5,$6,$7,FALSE)',
       [id, username, hash, fullName, classCode || '', Date.now(), token]);
       
     res.cookie('sid', id, { httpOnly: true, maxAge: 7 * 24 * 60 * 60 * 1000 });
     res.cookie('token', token, { httpOnly: true, maxAge: 7 * 24 * 60 * 60 * 1000 });
-    res.json({ ok: true });
+    res.json({ ok: true, redirect: '/lobby' });
   } catch (e) {
     res.status(500).json({ error: 'Server error' });
   }
@@ -49,8 +47,10 @@ app.post('/api/login', async (req, res) => {
   try {
     const r = await pool.query('SELECT * FROM students WHERE username=$1', [username]);
     const user = r.rows[0];
-    if (!user || !bcrypt.compareSync(password, user.password_hash))
+    
+    if (!user || !bcrypt.compareSync(password, user.password_hash)) {
       return res.status(401).json({ error: 'Salah username/password' });
+    }
       
     const token = uuid();
     await pool.query('UPDATE students SET session_token=$1 WHERE id=$2', [token, user.id]);
@@ -64,16 +64,15 @@ app.post('/api/login', async (req, res) => {
     
     res.cookie('sid', user.id, { httpOnly: true, maxAge: 7 * 24 * 60 * 60 * 1000 });
     res.cookie('token', token, { httpOnly: true, maxAge: 7 * 24 * 60 * 60 * 1000 });
-    res.json({ ok: true });
+    
+    res.json({ ok: true, redirect: user.is_teacher ? '/admin' : '/lobby' });
   } catch (e) {
     res.status(500).json({ error: 'Server error' });
   }
 });
 
 app.post('/api/logout', (req, res) => { 
-  res.clearCookie('sid'); 
-  res.clearCookie('token');
-  res.json({ ok: true }); 
+  res.clearCookie('sid'); res.clearCookie('token'); res.json({ ok: true }); 
 });
 
 app.get('/api/me', async (req, res) => {
@@ -82,16 +81,13 @@ app.get('/api/me', async (req, res) => {
   if (!id || !token) return res.status(401).json({ error: 'Belum login' });
   
   try {
-    const r = await pool.query('SELECT id, username, full_name, rating, matches_played, session_token, class_code FROM students WHERE id=$1', [id]);
+    const r = await pool.query('SELECT id, username, full_name, rating, matches_played, session_token, class_code, is_teacher FROM students WHERE id=$1', [id]);
     const user = r.rows[0];
     if (!user || user.session_token !== token) {
       res.clearCookie('sid'); res.clearCookie('token');
       return res.status(401).json({ error: 'Sesi berakhir' });
     }
-    res.json({
-      id: user.id, username: user.username, full_name: user.full_name,
-      rating: user.rating, matches_played: user.matches_played, class_code: user.class_code
-    });
+    res.json(user);
   } catch (e) {
     res.status(500).json({ error: 'Server error' });
   }
@@ -115,7 +111,6 @@ app.post('/api/update-profile', async (req, res) => {
     } else {
       await pool.query('UPDATE students SET username=$1 WHERE id=$2', [newUsername, id]);
     }
-
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: 'Server error' });
@@ -142,31 +137,23 @@ app.get('/api/check-username', async (req, res) => {
   }
 });
 
-// HANYA TAMPILKAN USERNAME
 app.get('/api/leaderboard', async (req, res) => {
   const id = req.cookies.sid;
   if (!id) return res.status(401).json({ error: 'Belum login' });
-  
   try {
-    const top10 = await pool.query('SELECT username, rating FROM students ORDER BY rating DESC LIMIT 10');
+    const top10 = await pool.query('SELECT username, rating FROM students WHERE is_teacher = FALSE ORDER BY rating DESC LIMIT 10');
     const myData = await pool.query('SELECT rating FROM students WHERE id=$1', [id]);
     if (myData.rows.length === 0) return res.status(404).json({ error: 'Not found' });
-    
     const myRating = myData.rows[0].rating;
-    const myRankData = await pool.query('SELECT COUNT(*) as total FROM students WHERE rating > $1', [myRating]);
+    const myRankData = await pool.query('SELECT COUNT(*) as total FROM students WHERE rating > $1 AND is_teacher = FALSE', [myRating]);
     const myRank = Number(myRankData.rows[0].total) + 1;
-
     res.json({ top10: top10.rows, myRank: myRank, myRating: myRating });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// HANYA TAMPILKAN USERNAME
 app.get('/api/history', async (req, res) => {
   const id = req.cookies.sid;
   if (!id) return res.status(401).json({ error: 'Belum login' });
-  
   try {
     const q = `
       SELECT m.id, m.winner, m.is_bot, m.hp_a, m.hp_b, 
@@ -180,13 +167,11 @@ app.get('/api/history', async (req, res) => {
       ORDER BY m.finished_at DESC LIMIT 5
     `;
     const result = await pool.query(q, [id]);
-    
     const history = result.rows.map(row => {
       const isA = row.player_a_id === id;
       const iWon = row.winner === (isA ? 'a' : 'b');
       const oppName = row.is_bot ? 'Komputer' : (isA ? row.name_b : row.name_a);
       const ratingChange = isA ? (row.rating_a_after - row.rating_a_before) : (row.rating_b_after - row.rating_b_before);
-        
       return {
         id: row.id, opponent: oppName || 'Unknown', isBot: row.is_bot,
         iWon: iWon, myHp: isA ? row.hp_a : row.hp_b, oppHp: isA ? row.hp_b : row.hp_a,
@@ -194,20 +179,61 @@ app.get('/api/history', async (req, res) => {
       };
     });
     res.json(history);
-  } catch (e) {
-    res.status(500).json({ error: 'Server error' });
-  }
+  } catch (e) { res.status(500).json({ error: 'Server error' }); }
 });
 
+// --- RUTE ADMIN ---
+app.get('/api/admin/stats', async (req, res) => {
+  try {
+    const totalStudents = await pool.query('SELECT COUNT(*) FROM students WHERE is_teacher = FALSE');
+    const totalMatches = await pool.query('SELECT COUNT(*) FROM matches');
+    const activeBank = await pool.query('SELECT s.active_bank_id, qb.name FROM settings s JOIN question_banks qb ON s.active_bank_id = qb.id WHERE s.id = 1');
+    res.json({
+      students: Number(totalStudents.rows[0].count),
+      matches: Number(totalMatches.rows[0].count),
+      activeBank: activeBank.rows[0] || { active_bank_id: 1, name: 'Belum disetel' }
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/admin/students', async (req, res) => {
+  try {
+    const q = `
+      SELECT s.id, s.full_name, s.username, s.class_code, s.rating, s.matches_played,
+        (SELECT COUNT(*) FROM answers a WHERE a.student_id = s.id AND a.is_correct = 1) as correct,
+        (SELECT COUNT(*) FROM answers a WHERE a.student_id = s.id) as total_answered
+      FROM students s WHERE s.is_teacher = FALSE ORDER BY s.rating DESC
+    `;
+    const result = await pool.query(q);
+    res.json(result.rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/admin/set-bank', async (req, res) => {
+  const { bankId } = req.body;
+  try {
+    await pool.query('UPDATE settings SET active_bank_id = $1 WHERE id = 1', [bankId]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// --- ROUTES ---
 app.get('/lobby', async (req, res) => {
   if (!req.cookies.sid || !req.cookies.token) return res.redirect('/');
   try {
-    const r = await pool.query('SELECT session_token FROM students WHERE id=$1', [req.cookies.sid]);
-    if (!r.rows.length || r.rows[0].session_token !== req.cookies.token) {
-      res.clearCookie('sid'); res.clearCookie('token');
-      return res.redirect('/');
-    }
+    const r = await pool.query('SELECT session_token, is_teacher FROM students WHERE id=$1', [req.cookies.sid]);
+    if (!r.rows.length || r.rows[0].session_token !== req.cookies.token) return res.redirect('/');
+    if (r.rows[0].is_teacher) return res.redirect('/admin');
     res.sendFile(__dirname + '/public/app.html');
+  } catch (e) { res.redirect('/'); }
+});
+
+app.get('/admin', async (req, res) => {
+  if (!req.cookies.sid || !req.cookies.token) return res.redirect('/');
+  try {
+    const r = await pool.query('SELECT session_token, is_teacher FROM students WHERE id=$1', [req.cookies.sid]);
+    if (!r.rows.length || r.rows[0].session_token !== req.cookies.token || !r.rows[0].is_teacher) return res.redirect('/');
+    res.sendFile(__dirname + '/public/admin.html');
   } catch (e) { res.redirect('/'); }
 });
 
@@ -231,7 +257,7 @@ io.use(async (socket, next) => {
   try {
     const r = await pool.query('SELECT * FROM students WHERE id=$1', [cookies.sid]);
     const user = r.rows[0];
-    if (!user || user.session_token !== cookies.token) return next(new Error('Sesi berakhir'));
+    if (!user || user.session_token !== cookies.token || user.is_teacher) return next(new Error('Sesi berakhir'));
     socket.user = user;
     next();
   } catch (e) { next(e); }
@@ -364,12 +390,11 @@ async function startMatch(socketAId, userA, opponent) {
     const matchId = uuid();
     const match = {
       id: matchId, bankId: bank.active_bank_id,
-      // GUNAKAN USERNAME UNTUK LAYAR DUEL
       playerA: { id: userA.id, name: userA.username, rating: userA.rating },
       playerB: { id: userB.id, name: userB.username, rating: userB.rating },
       isBot, botAccuracy: userB.botAccuracy, botMinDelay: userB.botMinDelay, botMaxDelay: userB.botMaxDelay,
       questions: qs, hp: { a: 100, b: 100 }, currentRound: 1,
-      answers: { a: {}, b: {} }, state: 'starting', roundEnding: false, roundDuration: 90000, // <-- 90 DETIK
+      answers: { a: {}, b: {} }, state: 'starting', roundEnding: false, roundDuration: 90000,
     };
     activeMatches.set(matchId, match);
 
@@ -404,7 +429,7 @@ function startRound(match) {
 
   io.to(match.id).emit('round:start', {
     round: match.currentRound, totalRounds: 5, code: q.code, options: q.options,
-    duration: 90000, hp: { ...match.hp }, // <-- 90 DETIK
+    duration: 90000, hp: { ...match.hp },
   });
 
   if (match.isBot) {
@@ -432,7 +457,7 @@ function startRound(match) {
     if (match.state !== 'playing' || match.roundEnding) return;
     match.roundEnding = true;
     revealRound(match);
-  }, 90000); // <-- 90 DETIK
+  }, 90000);
 }
 
 function revealRound(match) {

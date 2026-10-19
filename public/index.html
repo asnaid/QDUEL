@@ -47,8 +47,12 @@ function show(t, e) { msg.textContent = t; msg.className = 'msg ' + (e ? 'error'
 
 async function doLogin() {
   const r = await fetch('/api/login', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ username: lu.value, password: lp.value }) });
-  if (r.ok) location.href = '/lobby';
-  else show((await r.json()).error, true);
+  if (r.ok) {
+    const data = await r.json();
+    location.href = data.redirect; // Arahkan ke /admin atau /lobby
+  } else {
+    show((await r.json()).error, true);
+  }
 }
 
 async function doRegister() {
