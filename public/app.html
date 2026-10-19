@@ -5,8 +5,33 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
 <title>Quiz Duel</title>
 <link rel="stylesheet" href="/app.css">
+<style>
+  /* Style khusus overlay tutorial */
+  .tutorial-overlay {
+    position: fixed; inset: 0; background: rgba(15,23,42,0.95); 
+    display: flex; align-items: center; justify-content: center; 
+    z-index: 999; padding: 20px; text-align: center;
+  }
+  .tutorial-box {
+    background: #1e293b; padding: 30px; border-radius: 16px; 
+    max-width: 400px; border: 1px solid #3b82f6; box-shadow: 0 0 20px rgba(59,130,246,0.3);
+  }
+  .tutorial-icon { font-size: 50px; margin-bottom: 15px; display: inline-block; }
+</style>
 </head>
 <body>
+
+<!-- OVERLAY TUTORIAL AWAL -->
+<div id="tutorial-modal" class="tutorial-overlay hidden">
+  <div class="tutorial-box">
+    <div class="tutorial-icon" id="tut-icon">👋</div>
+    <h2 id="tut-title" style="color: #60a5fa; margin-bottom: 10px;">Selamat Datang!</h2>
+    <p id="tut-text" style="font-size: 15px; line-height: 1.6; color: #cbd5e1; margin-bottom: 20px;">
+      Di sini kamu akan berduel menjawab soal C++ dengan siswa lain.
+    </p>
+    <button class="btn-primary" onclick="nextTutorial()" id="tut-btn">Lanjut</button>
+  </div>
+</div>
 
 <div id="lobby-screen">
   <div class="container">
@@ -25,7 +50,7 @@
         <div id="spinner" class="spinner hidden"></div>
         <div id="status" class="status" style="margin-bottom: 0;">Siap menerima tantangan</div>
       </div>
-      <button id="btn-search" class="btn-primary" onclick="search()">Mulai Duel</button>
+      <button id="btn-search" class="btn-primary btn-pulse" onclick="search()">Mulai Duel</button>
       <button id="btn-bot" class="btn-secondary hidden" onclick="acceptBot()">Latihan vs Komputer</button>
       <button id="btn-cancel" class="btn-secondary hidden" onclick="cancel()">Batal</button>
       <button class="btn-secondary" onclick="openLeaderboard()" style="margin-top: 20px;">🏆 Papan Juara</button>
@@ -75,6 +100,7 @@
   </div>
 </div>
 
+<!-- Sisa modal leaderboard & profile tetap sama -->
 <div id="leaderboard-modal" class="end hidden">
   <div class="end-content">
     <h2 style="color: #fbbf24; margin-bottom: 16px;">🏆 Papan Juara</h2>
@@ -87,25 +113,20 @@
 <div id="profile-modal" class="end hidden">
   <div class="end-content">
     <h2 style="color: #60a5fa; margin-bottom: 16px;">👤 Pengaturan Akun</h2>
-    
     <div style="text-align: left; margin-bottom: 20px; font-size: 14px; background: #0f172a; padding: 12px; border-radius: 8px;">
       <div style="color: #f87171; margin-bottom: 4px; font-size: 11px;">🔒 Rahasia (Hanya Kamu & Guru):</div>
       <div id="prof-fullname" style="font-weight: bold; margin-bottom: 4px;">...</div>
       <div id="prof-class" style="font-weight: bold; color: #94a3b8; font-size: 12px; margin-bottom: 12px;">...</div>
-      
       <div style="color: #60a5fa; margin-bottom: 4px; font-size: 11px;">🌐 Publik (Tampil di Game):</div>
       <div id="prof-username-display" style="font-weight: bold;">...</div>
     </div>
-
     <div style="text-align: left;">
       <label style="font-size: 13px; color: #94a3b8;">Ganti Username (Nama Tampil):</label>
       <input id="prof-new-username" placeholder="Username baru..." style="margin-top:4px; margin-bottom:4px;">
       <div id="prof-username-status" style="font-size: 12px; margin-bottom: 10px; padding-left: 4px;"></div>
-      
       <label style="font-size: 13px; color: #94a3b8;">Ganti Password (Opsional):</label>
       <input id="prof-new-password" type="password" placeholder="Password baru..." style="margin-top:4px;">
     </div>
-
     <button class="btn-primary" onclick="saveProfile()" style="margin-top: 16px;">Simpan Perubahan</button>
     <button class="btn-secondary" onclick="closeProfile()">Batal</button>
   </div>
@@ -117,6 +138,15 @@ let socket, matchInfo = null, currentRound = 0, answered = false, timerInterval;
 let isPlayerB = false;
 let myProfileData = null;
 
+// Variabel Tutorial
+let tutStep = 0;
+const tutData = [
+  { icon: '⚔️', title: 'Selamat Datang di Arena!', text: 'Di sini kamu akan berduel catur C++ melawan siswa lain. Kalahkan mereka untuk mendapatkan Poin!' },
+  { icon: '💻', title: 'Cara Menjawab', text: 'Setiap ronde, kamu akan melihat potongan kode C++. Pilih jawaban yang benar sebelum waktu habis.' },
+  { icon: '❤️', title: 'HP & Damage', text: 'Menjawab benar akan mengurangi HP lawan. Jika HP-mu habis, kamu kalah. Jawab dengan cepat untuk damage lebih besar!' },
+  { icon: '🏆', title: 'Papan Juara', text: 'Kumpulkan Poin sebanyak mungkin untuk naik ke peringkat teratas di Papan Juara. Selamat bertanding!' }
+];
+
 async function init() {
   const r = await fetch('/api/me');
   if (!r.ok) return location.href = '/';
@@ -125,6 +155,12 @@ async function init() {
   
   document.getElementById('name').textContent = me.username;
   document.getElementById('rating').textContent = me.rating;
+
+  // Tampilkan tutorial jika belum pernah melihat
+  if (!me.has_seen_tutorial) {
+    document.getElementById('tutorial-modal').classList.remove('hidden');
+    showTutorialStep();
+  }
 
   socket = io();
   
@@ -190,6 +226,31 @@ async function init() {
   loadHistory();
 }
 
+// Fungsi Tutorial
+function showTutorialStep() {
+  const d = tutData[tutStep];
+  document.getElementById('tut-icon').textContent = d.icon;
+  document.getElementById('tut-title').textContent = d.title;
+  document.getElementById('tut-text').textContent = d.text;
+  
+  if (tutStep === tutData.length - 1) {
+    document.getElementById('tut-btn').textContent = 'Mengerti, Mulai Bertanding!';
+  } else {
+    document.getElementById('tut-btn').textContent = 'Lanjut';
+  }
+}
+
+async function nextTutorial() {
+  tutStep++;
+  if (tutStep < tutData.length) {
+    showTutorialStep();
+  } else {
+    document.getElementById('tutorial-modal').classList.add('hidden');
+    // Kirim status ke server bahwa siswa sudah melihat tutorial
+    await fetch('/api/tutorial-done', { method: 'POST' });
+  }
+}
+
 async function openProfile() {
   document.getElementById('prof-fullname').textContent = myProfileData.full_name;
   document.getElementById('prof-class').textContent = myProfileData.class_code || '-';
@@ -235,14 +296,22 @@ async function saveProfile() {
 function updateHpBar(hp, elementId) {
   const el = document.getElementById(elementId);
   el.style.width = hp + '%';
-  if (hp > 50) el.style.backgroundColor = '#4ade80';
-  else if (hp > 25) el.style.backgroundColor = '#fbbf24';
-  else el.style.backgroundColor = '#f87171';
+  if (hp > 50) {
+    el.style.backgroundColor = '#4ade80';
+    el.classList.remove('hp-danger');
+  } else if (hp > 25) {
+    el.style.backgroundColor = '#fbbf24';
+    el.classList.remove('hp-danger');
+  } else {
+    el.style.backgroundColor = '#f87171';
+    el.classList.add('hp-danger'); // Efek berdenyut jika HP kritis
+  }
 }
 
 function search() {
   socket.emit('queue:join');
   document.getElementById('btn-search').classList.add('hidden');
+  document.getElementById('btn-search').classList.remove('btn-pulse');
   document.getElementById('btn-cancel').classList.remove('hidden');
   document.getElementById('btn-bot').classList.add('hidden');
   document.getElementById('status').textContent = 'Mencari lawan...';
@@ -252,6 +321,7 @@ function search() {
 function cancel() {
   socket.emit('queue:leave');
   document.getElementById('btn-search').classList.remove('hidden');
+  document.getElementById('btn-search').classList.add('btn-pulse');
   document.getElementById('btn-cancel').classList.add('hidden');
   document.getElementById('btn-bot').classList.add('hidden');
   document.getElementById('status').textContent = 'Siap menerima tantangan';
@@ -344,10 +414,15 @@ function onReveal(data) {
     else title = 'Lawan Kehabisan Waktu';
   }
 
-  if (navigator.vibrate) {
-    if (data.reason.includes(mySide + '_correct') || data.reason.includes(mySide + '_faster')) navigator.vibrate(100);
-    else navigator.vibrate([100, 50, 100]);
+  // Efek Getar & Haptic
+  const isDamageToMe = (isPlayerB ? data.damage.b : data.damage.a) > 0;
+  if (isDamageToMe) {
+    document.body.classList.add('shake');
+    if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
+  } else {
+    if (navigator.vibrate) navigator.vibrate(100);
   }
+  setTimeout(() => document.body.classList.remove('shake'), 500);
 
   document.getElementById('reveal-title').textContent = title;
   document.getElementById('reveal-explanation').textContent = data.explanation || '';

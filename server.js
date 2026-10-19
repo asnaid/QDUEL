@@ -15,10 +15,10 @@ app.use(express.json());
 app.use(cookieParser());
 app.use(express.static('public'));
 
-// Auto-migrate
 pool.query('ALTER TABLE students ADD COLUMN IF NOT EXISTS session_token TEXT').catch(e => console.log(e.message));
 pool.query('ALTER TABLE students ADD COLUMN IF NOT EXISTS is_teacher BOOLEAN DEFAULT FALSE').catch(e => console.log(e.message));
 pool.query('ALTER TABLE students ADD COLUMN IF NOT EXISTS is_frozen BOOLEAN DEFAULT FALSE').catch(e => console.log(e.message));
+pool.query('ALTER TABLE students ADD COLUMN IF NOT EXISTS has_seen_tutorial BOOLEAN DEFAULT FALSE').catch(e => console.log(e.message));
 
 // --- AUTH & PROFIL ---
 app.post('/api/register', async (req, res) => {
@@ -84,7 +84,7 @@ app.get('/api/me', async (req, res) => {
   if (!id || !token) return res.status(401).json({ error: 'Belum login' });
   
   try {
-    const r = await pool.query('SELECT id, username, full_name, rating, matches_played, session_token, class_code, is_teacher, is_frozen FROM students WHERE id=$1', [id]);
+    const r = await pool.query('SELECT id, username, full_name, rating, matches_played, session_token, class_code, is_teacher, is_frozen, has_seen_tutorial FROM students WHERE id=$1', [id]);
     const user = r.rows[0];
     if (!user || user.session_token !== token) {
       res.clearCookie('sid'); res.clearCookie('token');
@@ -98,49 +98,13 @@ app.get('/api/me', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Server error' }); }
 });
 
-app.get('/api/leaderboard', async (req, res) => {
+app.post('/api/tutorial-done', async (req, res) => {
   const id = req.cookies.sid;
   if (!id) return res.status(401).json({ error: 'Belum login' });
   try {
-    const top10 = await pool.query('SELECT username, rating FROM students WHERE is_teacher = FALSE AND is_frozen = FALSE ORDER BY rating DESC LIMIT 10');
-    const myData = await pool.query('SELECT rating FROM students WHERE id=$1', [id]);
-    if (myData.rows.length === 0) return res.status(404).json({ error: 'Not found' });
-    const myRating = myData.rows[0].rating;
-    const myRankData = await pool.query('SELECT COUNT(*) as total FROM students WHERE rating > $1 AND is_teacher = FALSE AND is_frozen = FALSE', [myRating]);
-    const myRank = Number(myRankData.rows[0].total) + 1;
-    res.json({ top10: top10.rows, myRank: myRank, myRating: myRating });
+    await pool.query('UPDATE students SET has_seen_tutorial = TRUE WHERE id=$1', [id]);
+    res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.get('/api/history', async (req, res) => {
-  const id = req.cookies.sid;
-  if (!id) return res.status(401).json({ error: 'Belum login' });
-  try {
-    const q = `
-      SELECT m.id, m.winner, m.is_bot, m.hp_a, m.hp_b, 
-        m.rating_a_before, m.rating_a_after, m.rating_b_before, m.rating_b_after, 
-        m.finished_at, m.player_a_id, m.player_b_id,
-        pA.username as name_a, pB.username as name_b
-      FROM matches m
-      LEFT JOIN students pA ON pA.id = m.player_a_id
-      LEFT JOIN students pB ON pB.id = m.player_b_id
-      WHERE m.player_a_id = $1 OR m.player_b_id = $1
-      ORDER BY m.finished_at DESC LIMIT 5
-    `;
-    const result = await pool.query(q, [id]);
-    const history = result.rows.map(row => {
-      const isA = row.player_a_id === id;
-      const iWon = row.winner === (isA ? 'a' : 'b');
-      const oppName = row.is_bot ? 'Komputer' : (isA ? row.name_b : row.name_a);
-      const ratingChange = isA ? (row.rating_a_after - row.rating_a_before) : (row.rating_b_after - row.rating_b_before);
-      return {
-        id: row.id, opponent: oppName || 'Unknown', isBot: row.is_bot,
-        iWon: iWon, myHp: isA ? row.hp_a : row.hp_b, oppHp: isA ? row.hp_b : row.hp_a,
-        ratingChange: ratingChange, date: row.finished_at
-      };
-    });
-    res.json(history);
-  } catch (e) { res.status(500).json({ error: 'Server error' }); }
 });
 
 // --- RUTE ADMIN (GURU) ---
@@ -176,7 +140,6 @@ app.get('/api/admin/banks', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// DETEKSI ANOMALI (Perbaikan dengan Casting & JS Math)
 app.get('/api/admin/students', async (req, res) => {
   try {
     const q = `
@@ -196,8 +159,6 @@ app.get('/api/admin/students', async (req, res) => {
     const processed = result.rows.map(s => {
       const total = Number(s.total_answered) || 0;
       const correct = Number(s.correct) || 0;
-      
-      // Hitung rata-rata detik di JS agar tidak ada bug tipe data Postgres
       const avgMs = Number(s.avg_time_ms);
       const avgTime = avgMs > 0 ? Math.round((avgMs / 1000.0) * 10) / 10 : 0;
       const accuracy = total > 0 ? Math.round((correct / total) * 100) : 0;
@@ -212,21 +173,12 @@ app.get('/api/admin/students', async (req, res) => {
       }
 
       return { 
-        ...s, 
-        total_answered: total, 
-        correct: correct, 
-        avg_time_sec: avgTime, 
-        accuracy: accuracy, 
-        isAnomaly, 
-        anomalyReason 
+        ...s, total_answered: total, correct: correct, avg_time_sec: avgTime, 
+        accuracy: accuracy, isAnomaly, anomalyReason 
       };
     });
-
     res.json(processed);
-  } catch (e) { 
-    console.error("ERROR STUDENTS:", e); 
-    res.status(500).json({ error: e.message }); 
-  }
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/admin/students/:id/freeze', async (req, res) => {
@@ -238,7 +190,6 @@ app.post('/api/admin/students/:id/freeze', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// CRUD SISWA
 app.post('/api/admin/students', async (req, res) => {
   const { username, password, full_name, class_code } = req.body;
   try {
