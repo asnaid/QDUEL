@@ -42,7 +42,6 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .msg:empty { display: none; }
 .hidden { display: none !important; }
 
-/* Spinner Animation */
 .status-wrap { display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 12px; }
 .spinner { width: 20px; height: 20px; border: 3px solid rgba(255, 255, 255, 0.2); border-radius: 50%; border-top-color: #3b82f6; animation: spin 1s ease-in-out infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -86,9 +85,9 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .end-title { font-size: 28px; font-weight: 700; margin-bottom: 16px; }
 .end-title.win { color: #4ade80; }
 .end-title.lose { color: #f87171; }
+.end-title.draw { color: #fbbf24; } /* Tambahan untuk Seri */
 .end-details { color: #cbd5e1; font-size: 15px; line-height: 1.7; margin-bottom: 20px; }
 
-/* --- GAME FEEL ANIMATIONS --- */
 @keyframes shake {
   0% { transform: translate(1px, 1px) rotate(0deg); }
   10% { transform: translate(-1px, -2px) rotate(-1deg); }

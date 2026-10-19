@@ -15,7 +15,7 @@ app.use(express.json());
 app.use(cookieParser());
 app.use(express.static('public'));
 
-// Auto-migrate kolom database
+// Auto-migrate
 pool.query('ALTER TABLE students ADD COLUMN IF NOT EXISTS session_token TEXT').catch(e => console.log(e.message));
 pool.query('ALTER TABLE students ADD COLUMN IF NOT EXISTS is_teacher BOOLEAN DEFAULT FALSE').catch(e => console.log(e.message));
 pool.query('ALTER TABLE students ADD COLUMN IF NOT EXISTS is_frozen BOOLEAN DEFAULT FALSE').catch(e => console.log(e.message));
@@ -35,7 +35,7 @@ app.post('/api/register', async (req, res) => {
     const token = uuid();
     const hash = bcrypt.hashSync(password, 10);
     
-    await pool.query('INSERT INTO students (id, username, password_hash, full_name, class_code, created_at, session_token, is_teacher) VALUES ($1,$2,$3,$4,$5,$6,$7,FALSE)',
+    await pool.query('INSERT INTO students (id, username, password_hash, full_name, class_code, created_at, session_token, is_teacher, has_seen_tutorial) VALUES ($1,$2,$3,$4,$5,$6,$7,FALSE,FALSE)',
       [id, username, hash, fullName, classCode || '', Date.now(), token]);
       
     res.cookie('sid', id, { httpOnly: true, maxAge: 7 * 24 * 60 * 60 * 1000 });
@@ -106,6 +106,68 @@ app.post('/api/tutorial-done', async (req, res) => {
     await pool.query('UPDATE students SET has_seen_tutorial = TRUE WHERE id=$1', [id]);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// PERBAIKAN: Hanya yang punya match > 0 yang masuk papan juara
+app.get('/api/leaderboard', async (req, res) => {
+  const id = req.cookies.sid;
+  if (!id) return res.status(401).json({ error: 'Belum login' });
+  try {
+    const top10 = await pool.query(`
+      SELECT username, rating FROM students 
+      WHERE is_teacher = FALSE AND is_frozen = FALSE AND COALESCE(matches_played, 0) > 0 
+      ORDER BY rating DESC LIMIT 10
+    `);
+    
+    const myData = await pool.query('SELECT rating, matches_played FROM students WHERE id=$1', [id]);
+    if (myData.rows.length === 0) return res.status(404).json({ error: 'Not found' });
+    
+    const myRating = myData.rows[0].rating;
+    const myMatches = myData.rows[0].matches_played;
+    
+    let myRank = null;
+    if (myMatches > 0) {
+      const myRankData = await pool.query(`
+        SELECT COUNT(*) as total FROM students 
+        WHERE rating > $1 AND is_teacher = FALSE AND is_frozen = FALSE AND COALESCE(matches_played, 0) > 0
+      `, [myRating]);
+      myRank = Number(myRankData.rows[0].total) + 1;
+    }
+    
+    res.json({ top10: top10.rows, myRank: myRank, myRating: myRating });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/history', async (req, res) => {
+  const id = req.cookies.sid;
+  if (!id) return res.status(401).json({ error: 'Belum login' });
+  try {
+    const q = `
+      SELECT m.id, m.winner, m.is_bot, m.hp_a, m.hp_b, 
+        m.rating_a_before, m.rating_a_after, m.rating_b_before, m.rating_b_after, 
+        m.finished_at, m.player_a_id, m.player_b_id,
+        pA.username as name_a, pB.username as name_b
+      FROM matches m
+      LEFT JOIN students pA ON pA.id = m.player_a_id
+      LEFT JOIN students pB ON pB.id = m.player_b_id
+      WHERE m.player_a_id = $1 OR m.player_b_id = $1
+      ORDER BY m.finished_at DESC LIMIT 5
+    `;
+    const result = await pool.query(q, [id]);
+    const history = result.rows.map(row => {
+      const isA = row.player_a_id === id;
+      const isDraw = row.winner === 'draw';
+      const iWon = !isDraw && row.winner === (isA ? 'a' : 'b');
+      const oppName = row.is_bot ? 'Komputer' : (isA ? row.name_b : row.name_a);
+      const ratingChange = isA ? (row.rating_a_after - row.rating_a_before) : (row.rating_b_after - row.rating_b_before);
+      return {
+        id: row.id, opponent: oppName || 'Unknown', isBot: row.is_bot, isDraw: isDraw,
+        iWon: iWon, myHp: isA ? row.hp_a : row.hp_b, oppHp: isA ? row.hp_b : row.hp_a,
+        ratingChange: ratingChange, date: row.finished_at
+      };
+    });
+    res.json(history);
+  } catch (e) { res.status(500).json({ error: 'Server error' }); }
 });
 
 // --- RUTE ADMIN (GURU) ---
@@ -267,7 +329,31 @@ app.post('/api/admin/set-bank', async (req, res) => {
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
-
+// AKSI: RESET DATA SISWA (Hanya siswa & data terkait, soal aman)
+app.post('/api/admin/reset-students', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    
+    // 1. Hapus jawaban siswa
+    await client.query('DELETE FROM answers');
+    
+    // 2. Hapus riwayat duel
+    await client.query('DELETE FROM matches');
+    
+    // 3. Hapus akun siswa (tapi BUKAN guru/teacher)
+    await client.query('DELETE FROM students WHERE is_teacher = FALSE');
+    
+    await client.query('COMMIT');
+    res.json({ ok: true, message: 'Seluruh data siswa berhasil dihapus.' });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    console.error('RESET ERROR:', e);
+    res.status(500).json({ error: e.message });
+  } finally {
+    client.release();
+  }
+});
 // --- ROUTES ---
 app.get('/lobby', async (req, res) => {
   if (!req.cookies.sid || !req.cookies.token) return res.redirect('/');
@@ -555,8 +641,10 @@ function revealRound(match) {
       finishMatch(match, match.hp.a <= 0 ? 'b' : 'a', 'ko'); return;
     }
     if (match.currentRound >= 5) {
-      let winner = match.hp.a > match.hp.b ? 'a' : match.hp.b > match.hp.a ? 'b' : (Math.random() < 0.5 ? 'a' : 'b');
-      finishMatch(match, winner, 'poin'); return;
+      if (match.hp.a > match.hp.b) finishMatch(match, 'a', 'poin');
+      else if (match.hp.b > match.hp.a) finishMatch(match, 'b', 'poin');
+      else finishMatch(match, 'draw', 'seri');
+      return;
     }
     match.currentRound++; match.state = 'playing'; startRound(match);
   }, 5000); 
@@ -576,8 +664,9 @@ async function finishMatch(match, winner, reason) {
     const kB = getK(rowB.matches_played, match.isBot);
     const EA = 1 / (1 + Math.pow(10, (match.playerB.rating - match.playerA.rating) / 400));
     const EB = 1 - EA;
-    const SA = winner === 'a' ? 1 : 0;
-    const SB = winner === 'b' ? 1 : 0;
+    
+    const SA = winner === 'a' ? 1 : (winner === 'draw' ? 0.5 : 0);
+    const SB = winner === 'b' ? 1 : (winner === 'draw' ? 0.5 : 0);
     
     ratingA_after += Math.round(kA * (SA - EA));
     ratingB_after += Math.round(kB * (SB - EB));

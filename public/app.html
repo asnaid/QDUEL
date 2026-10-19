@@ -158,7 +158,10 @@ async function init() {
   document.getElementById('name').textContent = me.username;
   document.getElementById('rating').textContent = me.rating;
 
-  if (!me.has_seen_tutorial) {
+  // PENGAMAN GANDA: Cek dari database DAN localStorage
+  const hasSeenTutorial = me.has_seen_tutorial || localStorage.getItem('tutorial_done_' + me.id) === 'true';
+
+  if (!hasSeenTutorial) {
     document.getElementById('tutorial-modal').classList.remove('hidden');
     renderTutorial();
   }
@@ -187,9 +190,7 @@ async function init() {
     }
   });
   
-  socket.on('queue:waiting', () => {
-    // Timer matchmaking dihandle dari frontend
-  });
+  socket.on('queue:waiting', () => {});
 
   socket.on('error:msg', (data) => {
     alert(data.message);
@@ -241,11 +242,12 @@ function renderTutorial() {
 
   area.innerHTML = '';
   btn.classList.add('hidden');
+  btn.onclick = nextTutorial;
 
   if (tutStep === 1) {
     icon.textContent = '🏫';
     title.textContent = 'Selamat Datang di Akademi!';
-    text.innerHTML = 'Halo, Siswa Baru! Di Akademi Logika C++ ini, kamu akan menguji pemahaman pemrogramanmu dengan berduel melawan siswa lain.<br><br>Siap memulai ujian pertamamu?';
+    text.innerHTML = 'Halo, Siswa Baru! Di Akademi Logika C++ ini, <b>Duel</b> adalah tradisi wajib untuk menguji pemahaman pemrogramanmu. Kamu akan berduel logika melawan siswa lain.<br><br>Siap memulai duel pertamamu?';
     btn.classList.remove('hidden');
     btn.textContent = 'Lanjut';
   } 
@@ -258,7 +260,7 @@ function renderTutorial() {
   }
   else if (tutStep === 3) {
     icon.textContent = '💻';
-    title.textContent = 'Uji Coba Logika';
+    title.textContent = 'Simulasi Duel';
     text.innerHTML = 'Coba jawab soal ini untuk melanjutkan:';
     
     area.innerHTML = `
@@ -296,11 +298,11 @@ cout << a / b;</div>
       <b>Bagaimana cara menang?</b><br>
       1. HP lawan mencapai 0 (K.O).<br>
       2. Setelah 5 ronde, HP-mu lebih tinggi dari lawan.<br><br>
-      <b>Jika HP sama kuat (Seri)?</b><br>
-      Pemenang ditentukan oleh: Jumlah jawaban benar terbanyak -> Rata-rata waktu jawab tercepat -> Ronde tambahan (Sudden Death).
+      <b>Jika HP sama kuat di akhir ronde ke-5?</b><br>
+      Pertandingan berakhir <b>SERI</b>. Tidak ada yang kehilangan Poin secara drastis.
     `;
     btn.classList.remove('hidden');
-    btn.textContent = 'Mengerti, Mulai Ujian!';
+    btn.textContent = 'Mengerti, Mulai Duel!';
   }
 }
 
@@ -314,7 +316,6 @@ function checkTutAnswer(index, btn) {
     const btnLanjut = document.getElementById('tut-btn');
     btnLanjut.classList.remove('hidden');
     btnLanjut.textContent = 'Lanjut';
-    btnLanjut.onclick = () => { tutStep = 4; renderTutorial(); };
   } else {
     btn.classList.add('wrong');
     document.getElementById('tut-text').innerHTML = '<span style="color:#f87171;"><b>Belum tepat.</b> Ingat, pembagian dua integer akan menghasilkan integer (desimal dibuang). Coba lagi!</span>';
@@ -325,12 +326,15 @@ function checkTutAnswer(index, btn) {
 async function nextTutorial() {
   if (tutStep === 5) {
     document.getElementById('tutorial-modal').classList.add('hidden');
-    await fetch('/api/tutorial-done', { method: 'POST' });
+    localStorage.setItem('tutorial_done_' + myProfileData.id, 'true');
+    myProfileData.has_seen_tutorial = true; 
+    fetch('/api/tutorial-done', { method: 'POST' });
   } else {
     tutStep++;
     renderTutorial();
   }
 }
+// === END OF TUTORIAL ===
 
 async function openProfile() {
   document.getElementById('prof-fullname').textContent = myProfileData.full_name;
@@ -525,15 +529,17 @@ function onEnd(data) {
   clearInterval(timerInterval);
   document.getElementById('reveal').classList.add('hidden'); 
   
+  const isDraw = data.winner === 'draw';
   const iWon = data.winner === matchInfo.you;
-  let title = iWon ? '🎉 MENANG!' : 'Belum Beruntung';
+  
+  let title = isDraw ? '🤝 SERI!' : (iWon ? '🎉 MENANG!' : 'Belum Beruntung');
   
   if (data.reason === 'disconnect') {
     title = iWon ? '🎉 MENANG! (Lawan Keluar)' : 'Kalah (Kamu Keluar)';
   }
   
   document.getElementById('end-title').textContent = title;
-  document.getElementById('end-title').className = 'end-title ' + (iWon ? 'win' : 'lose');
+  document.getElementById('end-title').className = 'end-title ' + (isDraw ? 'win' : (iWon ? 'win' : 'lose'));
   
   const myRating = isPlayerB ? data.rating.b : data.rating.a;
   const myHpEnd = isPlayerB ? data.hp.b : data.hp.a;
@@ -557,13 +563,20 @@ async function openLeaderboard() {
     const data = await r.json();
     const list = document.getElementById('leaderboard-list');
     list.innerHTML = '';
-    data.top10.forEach((user, i) => {
-      const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
-      list.innerHTML += `<div style="display:flex; justify-content:space-between; padding: 6px 0; border-bottom: 1px solid #334155;">
-        <span>${medal} ${user.username}</span><span style="color:#60a5fa; font-weight:bold;">${user.rating}</span>
-      </div>`;
-    });
-    document.getElementById('my-rank-info').innerHTML = `Posisi Kamu: Peringkat ${data.myRank} <br> Poin: ${data.myRating}`;
+    
+    if (data.top10.length === 0) {
+      list.innerHTML = '<div style="color:#94a3b8; text-align:center;">Belum ada siswa yang bermain.</div>';
+    } else {
+      data.top10.forEach((user, i) => {
+        const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
+        list.innerHTML += `<div style="display:flex; justify-content:space-between; padding: 6px 0; border-bottom: 1px solid #334155;">
+          <span>${medal} ${user.username}</span><span style="color:#60a5fa; font-weight:bold;">${user.rating}</span>
+        </div>`;
+      });
+    }
+
+    let rankText = data.myRank === null ? 'Kamu belum pernah bermain Duel.' : `Peringkat ${data.myRank}`;
+    document.getElementById('my-rank-info').innerHTML = `Posisi Kamu: ${rankText} <br> Poin: ${data.myRating}`;
     document.getElementById('leaderboard-modal').classList.remove('hidden');
   } catch (err) { alert('Terjadi kesalahan jaringan.'); }
 }
@@ -579,8 +592,8 @@ async function loadHistory() {
     const list = document.getElementById('history-list');
     list.innerHTML = '';
     data.forEach(match => {
-      const color = match.iWon ? '#4ade80' : '#f87171';
-      const resultText = match.iWon ? 'Menang' : 'Kalah';
+      const color = match.isDraw ? '#fbbf24' : (match.iWon ? '#4ade80' : '#f87171');
+      const resultText = match.isDraw ? 'Seri' : (match.iWon ? 'Menang' : 'Kalah');
       const ratingColor = match.ratingChange > 0 ? '#4ade80' : (match.ratingChange < 0 ? '#f87171' : '#94a3b8');
       const ratingStr = match.ratingChange > 0 ? `+${match.ratingChange}` : match.ratingChange;
       const botText = match.isBot ? ' (Komputer)' : '';

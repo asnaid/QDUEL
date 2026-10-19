@@ -36,6 +36,13 @@
   .modal-box { background: #1e293b; padding: 24px; border-radius: 12px; width: 100%; max-width: 500px; border: 1px solid #334155; max-height: 90vh; overflow-y: auto; }
   .modal-title { font-size: 18px; font-weight: bold; margin-bottom: 16px; color: #60a5fa; }
   .row-anomaly { background: rgba(239, 68, 68, 0.1); border-left: 3px solid #ef4444; }
+  
+  /* Danger Zone Style */
+  .danger-zone { background: rgba(127, 29, 29, 0.2); border: 1px solid #7f1d1d; border-radius: 12px; padding: 20px; margin-top: 30px; }
+  .danger-zone h3 { color: #f87171; font-size: 16px; margin-bottom: 8px; }
+  .danger-zone p { font-size: 13px; color: #cbd5e1; margin-bottom: 15px; line-height: 1.5; }
+  .btn-danger { background: #ef4444; color: white; border: none; padding: 12px 20px; border-radius: 8px; font-weight: bold; cursor: pointer; width: 100%; font-size: 14px; }
+  .btn-danger:hover { background: #dc2626; }
 </style>
 </head>
 <body>
@@ -53,6 +60,7 @@
     <div class="tab" onclick="switchTab('analitik', this)">Analitik Soal</div>
   </div>
 
+  <!-- PANEL 1: RINGKASAN -->
   <div id="panel-ringkasan" class="panel active">
     <div class="stats-grid">
       <div class="stat-card"><h3>Total Siswa</h3><div class="value" id="stat-students">-</div></div>
@@ -63,8 +71,20 @@
     <div class="table-wrap">
       <table><thead><tr><th>Pemain 1</th><th>Pemain 2</th><th>Pemenang</th></tr></thead><tbody id="recent-matches"></tbody></table>
     </div>
+
+    <!-- ZONA BERBAHAYA: RESET DATA -->
+    <div class="danger-zone">
+      <h3>⚠️ Zona Berbahaya (Reset Data)</h3>
+      <p>
+        Tindakan ini akan <b>menghapus permanen SEMUA data siswa</b>, termasuk akun siswa, riwayat duel, poin, dan jawaban. 
+        <br><br>
+        <i>*Bank soal dan Akun Guru Anda <b>TIDAK</b> akan terhapus.</i>
+      </p>
+      <button class="btn-danger" onclick="resetStudentData()">🗑️ Reset Seluruh Data Siswa</button>
+    </div>
   </div>
 
+  <!-- PANEL 2: DATA SISWA -->
   <div id="panel-siswa" class="panel">
     <div class="filter-box">
       <input type="text" id="search-student" placeholder="Cari Nama atau Username..." onkeyup="renderStudents()">
@@ -87,11 +107,13 @@
     </div>
   </div>
 
+  <!-- PANEL 3: BANK SOAL -->
   <div id="panel-bank" class="panel">
     <p style="font-size: 13px; color: #94a3b8; margin-bottom: 15px;">Klik "Aktifkan" untuk mengganti bank soal yang akan digunakan di duel.</p>
     <div class="bank-grid" id="bank-list"></div>
   </div>
 
+  <!-- PANEL 4: ANALITIK SOAL -->
   <div id="panel-analitik" class="panel">
     <p style="font-size: 13px; color: #94a3b8; margin-bottom: 15px;">Statistik seluruh soal dari semua bank. Data diurutkan dari soal yang paling sering dijawab salah.</p>
     <div class="table-wrap">
@@ -103,7 +125,7 @@
   </div>
 </div>
 
-<!-- Modal CRUD & Reset -->
+<!-- MODAL CRUD & RESET (Sama seperti sebelumnya) -->
 <div id="modal-student" class="modal-overlay hidden">
   <div class="modal-box">
     <div class="modal-title" id="modal-student-title">Tambah Siswa</div>
@@ -188,6 +210,29 @@ async function loadOverview() {
     }).join('') || '<tr><td colspan="3" style="text-align: center;">Belum ada duel.</td></tr>';
   } catch(e) {}
 }
+
+// FUNGSI ZONA BERBAHAYA
+async function resetStudentData() {
+  const konfirmasi1 = confirm("⚠️ PERINGATAN KERAS ⚠️\n\nAnda akan menghapus SEMUA akun siswa dan seluruh riwayat permainan (poin, jawaban, duel).\n\nData yang dihapus TIDAK DAPAT dikembalikan.\nBank soal dan Akun Guru TIDAK akan terhapus.\n\nApakah Anda benar-benar yakin?");
+  if (!konfirmasi1) return;
+
+  const konfirmasi2 = prompt("Ketik persis frasa ini (tanpa tanda kutip) untuk melanjutkan:\n\nRESET SISWA");
+  if (konfirmasi2 !== "RESET SISWA") {
+    return alert("Konfirmasi gagal. Tindakan dibatalkan.");
+  }
+
+  const r = await fetch('/api/admin/reset-students', { method: 'POST' });
+  if (r.ok) {
+    alert('Berhasil! Seluruh akun dan data siswa telah dihapus.');
+    loadOverview();
+    loadStudents();
+    loadAnalytics();
+  } else {
+    const err = await r.json();
+    alert('Gagal menghapus data: ' + err.error);
+  }
+}
+// END FUNGSI ZONA BERBAHAYA
 
 async function loadStudents() {
   try {
