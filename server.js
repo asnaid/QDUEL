@@ -15,7 +15,10 @@ app.use(express.json());
 app.use(cookieParser());
 app.use(express.static('public'));
 
+// Auto-migrate
 pool.query('ALTER TABLE students ADD COLUMN IF NOT EXISTS session_token TEXT').catch(e => console.log(e.message));
+pool.query('ALTER TABLE students ADD COLUMN IF NOT EXISTS is_teacher BOOLEAN DEFAULT FALSE').catch(e => console.log(e.message));
+pool.query('ALTER TABLE students ADD COLUMN IF NOT EXISTS is_frozen BOOLEAN DEFAULT FALSE').catch(e => console.log(e.message));
 
 // --- AUTH & PROFIL ---
 app.post('/api/register', async (req, res) => {
@@ -37,9 +40,7 @@ app.post('/api/register', async (req, res) => {
     res.cookie('sid', id, { httpOnly: true, maxAge: 7 * 24 * 60 * 60 * 1000 });
     res.cookie('token', token, { httpOnly: true, maxAge: 7 * 24 * 60 * 60 * 1000 });
     res.json({ ok: true, redirect: '/lobby' });
-  } catch (e) {
-    res.status(500).json({ error: 'Server error' });
-  }
+  } catch (e) { res.status(500).json({ error: 'Server error' }); }
 });
 
 app.post('/api/login', async (req, res) => {
@@ -50,6 +51,10 @@ app.post('/api/login', async (req, res) => {
     
     if (!user || !bcrypt.compareSync(password, user.password_hash)) {
       return res.status(401).json({ error: 'Salah username/password' });
+    }
+
+    if (user.is_frozen) {
+      return res.status(403).json({ error: 'Akun ini dibekukan oleh Guru karena terindikasi kecurangan.' });
     }
       
     const token = uuid();
@@ -66,9 +71,7 @@ app.post('/api/login', async (req, res) => {
     res.cookie('token', token, { httpOnly: true, maxAge: 7 * 24 * 60 * 60 * 1000 });
     
     res.json({ ok: true, redirect: user.is_teacher ? '/admin' : '/lobby' });
-  } catch (e) {
-    res.status(500).json({ error: 'Server error' });
-  }
+  } catch (e) { res.status(500).json({ error: 'Server error' }); }
 });
 
 app.post('/api/logout', (req, res) => { 
@@ -81,71 +84,29 @@ app.get('/api/me', async (req, res) => {
   if (!id || !token) return res.status(401).json({ error: 'Belum login' });
   
   try {
-    const r = await pool.query('SELECT id, username, full_name, rating, matches_played, session_token, class_code, is_teacher FROM students WHERE id=$1', [id]);
+    const r = await pool.query('SELECT id, username, full_name, rating, matches_played, session_token, class_code, is_teacher, is_frozen FROM students WHERE id=$1', [id]);
     const user = r.rows[0];
     if (!user || user.session_token !== token) {
       res.clearCookie('sid'); res.clearCookie('token');
       return res.status(401).json({ error: 'Sesi berakhir' });
     }
+    if (user.is_frozen) {
+      res.clearCookie('sid'); res.clearCookie('token');
+      return res.status(403).json({ error: 'Akun dibekukan' });
+    }
     res.json(user);
-  } catch (e) {
-    res.status(500).json({ error: 'Server error' });
-  }
-});
-
-app.post('/api/update-profile', async (req, res) => {
-  const id = req.cookies.sid;
-  if (!id) return res.status(401).json({ error: 'Belum login' });
-  const { newUsername, newPassword } = req.body;
-
-  if (!newUsername) return res.status(400).json({ error: 'Username tidak boleh kosong' });
-  if (/\s/.test(newUsername)) return res.status(400).json({ error: 'Username tidak boleh mengandung spasi' });
-
-  try {
-    const cek = await pool.query('SELECT id FROM students WHERE username=$1 AND id != $2', [newUsername, id]);
-    if (cek.rows.length > 0) return res.status(400).json({ error: 'Username sudah dipakai siswa lain' });
-
-    if (newPassword) {
-      const hash = bcrypt.hashSync(newPassword, 10);
-      await pool.query('UPDATE students SET username=$1, password_hash=$2 WHERE id=$3', [newUsername, hash, id]);
-    } else {
-      await pool.query('UPDATE students SET username=$1 WHERE id=$2', [newUsername, id]);
-    }
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ error: 'Server error' });
-  }
-});
-
-app.get('/api/check-username', async (req, res) => {
-  const { username, excludeId } = req.query;
-  if (!username) return res.json({ available: false });
-  if (/\s/.test(username)) return res.json({ available: false, error: 'Tidak boleh ada spasi' });
-
-  try {
-    let q = 'SELECT id FROM students WHERE username=$1';
-    let p = [username];
-    if (excludeId) {
-      q += ' AND id != $2';
-      p.push(excludeId);
-    }
-    const r = await pool.query(q, p);
-    if (r.rows.length > 0) return res.json({ available: false });
-    res.json({ available: true });
-  } catch (e) {
-    res.status(500).json({ error: 'Server error' });
-  }
+  } catch (e) { res.status(500).json({ error: 'Server error' }); }
 });
 
 app.get('/api/leaderboard', async (req, res) => {
   const id = req.cookies.sid;
   if (!id) return res.status(401).json({ error: 'Belum login' });
   try {
-    const top10 = await pool.query('SELECT username, rating FROM students WHERE is_teacher = FALSE ORDER BY rating DESC LIMIT 10');
+    const top10 = await pool.query('SELECT username, rating FROM students WHERE is_teacher = FALSE AND is_frozen = FALSE ORDER BY rating DESC LIMIT 10');
     const myData = await pool.query('SELECT rating FROM students WHERE id=$1', [id]);
     if (myData.rows.length === 0) return res.status(404).json({ error: 'Not found' });
     const myRating = myData.rows[0].rating;
-    const myRankData = await pool.query('SELECT COUNT(*) as total FROM students WHERE rating > $1 AND is_teacher = FALSE', [myRating]);
+    const myRankData = await pool.query('SELECT COUNT(*) as total FROM students WHERE rating > $1 AND is_teacher = FALSE AND is_frozen = FALSE', [myRating]);
     const myRank = Number(myRankData.rows[0].total) + 1;
     res.json({ top10: top10.rows, myRank: myRank, myRating: myRating });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -207,41 +168,82 @@ app.get('/api/admin/stats', async (req, res) => {
 
 app.get('/api/admin/banks', async (req, res) => {
   try {
-    const q = `
-      SELECT qb.id, qb.name, COUNT(q.id) as total_questions 
-      FROM question_banks qb 
-      LEFT JOIN questions q ON qb.id = q.bank_id 
-      GROUP BY qb.id, qb.name ORDER BY qb.id ASC
-    `;
+    const q = `SELECT qb.id, qb.name, COUNT(q.id) as total_questions 
+               FROM question_banks qb LEFT JOIN questions q ON qb.id = q.bank_id 
+               GROUP BY qb.id, qb.name ORDER BY qb.id ASC`;
     const result = await pool.query(q);
     res.json(result.rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// DETEKSI ANOMALI (Perbaikan dengan Casting & JS Math)
 app.get('/api/admin/students', async (req, res) => {
   try {
     const q = `
-      SELECT s.id, s.full_name, s.username, s.class_code, s.rating, s.matches_played,
-        (SELECT COUNT(*) FROM answers a WHERE a.student_id = s.id AND a.is_correct = 1) as correct,
-        (SELECT COUNT(*) FROM answers a WHERE a.student_id = s.id) as total_answered,
-        (SELECT COUNT(*) FROM matches m WHERE (m.winner = 'a' AND m.player_a_id = s.id) OR (m.winner = 'b' AND m.player_b_id = s.id)) as wins
-      FROM students s WHERE s.is_teacher = FALSE ORDER BY s.rating DESC
+      SELECT 
+        s.id, s.full_name, s.username, s.class_code, s.rating, s.matches_played, s.is_frozen,
+        COUNT(a.id) as total_answered,
+        COALESCE(SUM(CASE WHEN a.is_correct = 1 THEN 1 ELSE 0 END), 0) as correct,
+        COALESCE(AVG(a.time_ms), 0) as avg_time_ms
+      FROM students s
+      LEFT JOIN answers a ON s.id::text = a.student_id::text
+      WHERE s.is_teacher = FALSE
+      GROUP BY s.id, s.full_name, s.username, s.class_code, s.rating, s.matches_played, s.is_frozen
+      ORDER BY s.rating DESC
     `;
     const result = await pool.query(q);
-    res.json(result.rows);
+    
+    const processed = result.rows.map(s => {
+      const total = Number(s.total_answered) || 0;
+      const correct = Number(s.correct) || 0;
+      
+      // Hitung rata-rata detik di JS agar tidak ada bug tipe data Postgres
+      const avgMs = Number(s.avg_time_ms);
+      const avgTime = avgMs > 0 ? Math.round((avgMs / 1000.0) * 10) / 10 : 0;
+      const accuracy = total > 0 ? Math.round((correct / total) * 100) : 0;
+      
+      let isAnomaly = false;
+      let anomalyReason = '';
+
+      if (total >= 10 && avgTime > 0 && avgTime < 3) {
+        isAnomaly = true; anomalyReason = 'Waktu jawab super cepat (< 3 detik)';
+      } else if (total >= 15 && accuracy > 90 && avgTime < 5) {
+        isAnomaly = true; anomalyReason = 'Akurasi > 90% dengan waktu sangat cepat';
+      }
+
+      return { 
+        ...s, 
+        total_answered: total, 
+        correct: correct, 
+        avg_time_sec: avgTime, 
+        accuracy: accuracy, 
+        isAnomaly, 
+        anomalyReason 
+      };
+    });
+
+    res.json(processed);
+  } catch (e) { 
+    console.error("ERROR STUDENTS:", e); 
+    res.status(500).json({ error: e.message }); 
+  }
+});
+
+app.post('/api/admin/students/:id/freeze', async (req, res) => {
+  const { id } = req.params;
+  const { frozen } = req.body;
+  try {
+    await pool.query('UPDATE students SET is_frozen=$1 WHERE id=$2', [frozen, id]);
+    res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // CRUD SISWA
 app.post('/api/admin/students', async (req, res) => {
   const { username, password, full_name, class_code } = req.body;
-  if (!username || !password || !full_name) return res.status(400).json({ error: 'Data kurang' });
-  if (/\s/.test(username)) return res.status(400).json({ error: 'Username tanpa spasi' });
-  
   try {
     const exists = await pool.query('SELECT id FROM students WHERE username=$1', [username]);
     if (exists.rows.length) return res.status(400).json({ error: 'Username sudah dipakai' });
-    
     const id = uuid();
     const hash = bcrypt.hashSync(password, 10);
     await pool.query('INSERT INTO students (id, username, password_hash, full_name, class_code, created_at, is_teacher) VALUES ($1,$2,$3,$4,$5,$6,FALSE)',
@@ -253,43 +255,25 @@ app.post('/api/admin/students', async (req, res) => {
 app.put('/api/admin/students/:id', async (req, res) => {
   const { id } = req.params;
   const { username, full_name, class_code } = req.body;
-  if (!username || !full_name) return res.status(400).json({ error: 'Data kurang' });
-  if (/\s/.test(username)) return res.status(400).json({ error: 'Username tanpa spasi' });
-
   try {
-    const exists = await pool.query('SELECT id FROM students WHERE username=$1 AND id != $2', [username, id]);
-    if (exists.rows.length) return res.status(400).json({ error: 'Username sudah dipakai siswa lain' });
-
-    await pool.query('UPDATE students SET username=$1, full_name=$2, class_code=$3 WHERE id=$4', 
-      [username, full_name, class_code || '', id]);
+    await pool.query('UPDATE students SET username=$1, full_name=$2, class_code=$3 WHERE id=$4', [username, full_name, class_code || '', id]);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.delete('/api/admin/students/:id', async (req, res) => {
   const { id } = req.params;
-  const client = await pool.connect();
   try {
-    await client.query('BEGIN');
-    // Hapus data terkait dulu agar tidak melanggar Foreign Key
-    await client.query('DELETE FROM answers WHERE student_id=$1', [id]);
-    await client.query('DELETE FROM matches WHERE player_a_id=$1 OR player_b_id=$1', [id]);
-    await client.query('DELETE FROM students WHERE id=$1', [id]);
-    await client.query('COMMIT');
+    await pool.query('DELETE FROM answers WHERE student_id=$1', [id]);
+    await pool.query('DELETE FROM matches WHERE player_a_id=$1 OR player_b_id=$1', [id]);
+    await pool.query('DELETE FROM students WHERE id=$1', [id]);
     res.json({ ok: true });
-  } catch (e) {
-    await client.query('ROLLBACK');
-    res.status(500).json({ error: e.message });
-  } finally {
-    client.release();
-  }
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/admin/students/:id/reset-password', async (req, res) => {
   const { id } = req.params;
   const { newPassword } = req.body;
-  if (!newPassword || newPassword.length < 4) return res.status(400).json({ error: 'Password minimal 4 karakter' });
-
   try {
     const hash = bcrypt.hashSync(newPassword, 10);
     await pool.query('UPDATE students SET password_hash=$1 WHERE id=$2', [hash, id]);
@@ -302,46 +286,27 @@ app.get('/api/admin/students/:id/detail', async (req, res) => {
   try {
     const student = await pool.query('SELECT full_name, username, class_code, rating, matches_played FROM students WHERE id=$1', [id]);
     if (student.rows.length === 0) return res.status(404).json({ error: 'Siswa tidak ditemukan' });
-    
     const matches = await pool.query(`
-      SELECT m.finished_at, m.winner, m.hp_a, m.hp_b, m.is_bot, pA.username as name_a, pB.username as name_b, m.player_a_id
-      FROM matches m
-      LEFT JOIN students pA ON m.player_a_id = pA.id
-      LEFT JOIN students pB ON m.player_b_id = pB.id
-      WHERE m.player_a_id = $1 OR m.player_b_id = $1
-      ORDER BY m.finished_at DESC LIMIT 10
+      SELECT m.finished_at, m.winner, m.hp_a, m.hp_b, m.is_bot, pA.username as name_a, pB.username as name_b, m.player_a_id, m.player_b_id
+      FROM matches m LEFT JOIN students pA ON m.player_a_id = pA.id LEFT JOIN students pB ON m.player_b_id = pB.id
+      WHERE m.player_a_id = $1 OR m.player_b_id = $1 ORDER BY m.finished_at DESC LIMIT 10
     `, [id]);
-
     res.json({ info: student.rows[0], matches: matches.rows });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ANALITIK SOAL
 app.get('/api/admin/questions/stats', async (req, res) => {
   try {
-    const q = `
-      SELECT q.id, q.code, q.bank_id,
-        COUNT(a.id) as total_attempts,
-        SUM(CASE WHEN a.is_correct = 1 THEN 1 ELSE 0 END) as correct_attempts
-      FROM questions q
-      JOIN answers a ON q.id = a.question_id
-      WHERE q.bank_id = (SELECT active_bank_id FROM settings WHERE id=1)
-      GROUP BY q.id, q.code, q.bank_id
-      HAVING COUNT(a.id) >= 3
-    `;
+    const q = `SELECT q.id, q.bank_id, q.code, COUNT(a.id) as total_attempts, SUM(CASE WHEN a.is_correct = 1 THEN 1 ELSE 0 END) as correct_attempts
+               FROM questions q JOIN answers a ON q.id = a.question_id GROUP BY q.id, q.bank_id, q.code HAVING COUNT(a.id) > 0`;
     const result = await pool.query(q);
-    
     const processed = result.rows.map(r => {
       const total = Number(r.total_attempts);
       const correct = Number(r.correct_attempts);
-      const accuracy = Math.round((correct / total) * 100);
-      return { ...r, total, correct, accuracy };
+      return { ...r, total, correct, accuracy: Math.round((correct / total) * 100) };
     });
-
-    const hardest = [...processed].sort((a, b) => a.accuracy - b.accuracy).slice(0, 5);
-    const easiest = [...processed].sort((a, b) => b.accuracy - a.accuracy).slice(0, 5);
-
-    res.json({ hardest, easiest });
+    processed.sort((a, b) => a.accuracy - b.accuracy);
+    res.json(processed);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -357,8 +322,8 @@ app.post('/api/admin/set-bank', async (req, res) => {
 app.get('/lobby', async (req, res) => {
   if (!req.cookies.sid || !req.cookies.token) return res.redirect('/');
   try {
-    const r = await pool.query('SELECT session_token, is_teacher FROM students WHERE id=$1', [req.cookies.sid]);
-    if (!r.rows.length || r.rows[0].session_token !== req.cookies.token) return res.redirect('/');
+    const r = await pool.query('SELECT session_token, is_teacher, is_frozen FROM students WHERE id=$1', [req.cookies.sid]);
+    if (!r.rows.length || r.rows[0].session_token !== req.cookies.token || r.rows[0].is_frozen) return res.redirect('/');
     if (r.rows[0].is_teacher) return res.redirect('/admin');
     res.sendFile(__dirname + '/public/app.html');
   } catch (e) { res.redirect('/'); }
@@ -393,7 +358,7 @@ io.use(async (socket, next) => {
   try {
     const r = await pool.query('SELECT * FROM students WHERE id=$1', [cookies.sid]);
     const user = r.rows[0];
-    if (!user || user.session_token !== cookies.token || user.is_teacher) return next(new Error('Sesi berakhir'));
+    if (!user || user.session_token !== cookies.token || user.is_teacher || user.is_frozen) return next(new Error('Sesi berakhir'));
     socket.user = user;
     next();
   } catch (e) { next(e); }
@@ -467,7 +432,6 @@ function tryMatch() {
       const a = queue[i], b = queue[j];
       const wait = Math.min(now - a.joinedAt, now - b.joinedAt);
       const window = Math.min(5 + Math.floor(wait / 1000) * 10, 400);
-      
       if (Math.abs(a.rating - b.rating) <= window) {
         queue.splice(j, 1); queue.splice(i, 1);
         const sockA = io.sockets.sockets.get(a.socketId);
@@ -508,7 +472,6 @@ async function startMatch(socketAId, userA, opponent) {
     if (userA.rating < 1000) { botAccuracy = 0.40; minDelay = 8000; maxDelay = 15000; }
     else if (userA.rating >= 1000 && userA.rating < 1300) { botAccuracy = 0.65; minDelay = 5000; maxDelay = 10000; }
     else { botAccuracy = 0.85; minDelay = 3000; maxDelay = 6000; }
-
     userB = { id: `bot_${uuid()}`, username: 'Komputer', rating: userA.rating, botAccuracy, botMinDelay: minDelay, botMaxDelay: maxDelay };
   } else {
     userB = opponent.user;
@@ -559,7 +522,6 @@ function startRound(match) {
   match.state = 'playing';
   match.roundEnding = false;
   match.roundStartedAt = Date.now();
-  
   match.currentRound = Number(match.currentRound);
   const q = match.questions[match.currentRound - 1];
 
@@ -600,7 +562,6 @@ function revealRound(match) {
   if (match.state !== 'playing') return;
   match.state = 'revealing';
   if (match.roundTimeout) { clearTimeout(match.roundTimeout); match.roundTimeout = null; }
-
   const r = Number(match.currentRound);
   const q = match.questions[r - 1];
   const ansA = match.answers.a[r];
@@ -654,14 +615,12 @@ function revealRound(match) {
 async function finishMatch(match, winner, reason) {
   if (match.state === 'finished') return;
   match.state = 'finished';
-
   let ratingA_after = match.playerA.rating;
   let ratingB_after = match.playerB.rating;
 
   try {
     const rowA = (await pool.query('SELECT matches_played FROM students WHERE id=$1', [match.playerA.id])).rows[0];
     let rowB = match.isBot ? { matches_played: rowA.matches_played } : (await pool.query('SELECT matches_played FROM students WHERE id=$1', [match.playerB.id])).rows[0];
-
     const getK = (matches, isBot) => isBot ? 10 : (matches < 10 ? 40 : matches < 30 ? 32 : 24);
     const kA = getK(rowA.matches_played, match.isBot);
     const kB = getK(rowB.matches_played, match.isBot);
@@ -683,10 +642,7 @@ async function finishMatch(match, winner, reason) {
 
   io.to(match.id).emit('match:end', {
     winner, reason, hp: { ...match.hp },
-    rating: {
-      a: { before: match.playerA.rating, after: ratingA_after, change: ratingA_after - match.playerA.rating },
-      b: { before: match.playerB.rating, after: ratingB_after, change: ratingB_after - match.playerB.rating },
-    },
+    rating: { a: { before: match.playerA.rating, after: ratingA_after, change: ratingA_after - match.playerA.rating }, b: { before: match.playerB.rating, after: ratingB_after, change: ratingB_after - match.playerB.rating } },
   });
   activeMatches.delete(match.id);
 }

@@ -18,25 +18,20 @@
   
   <div class="card">
     <h2>Daftar Akun Baru</h2>
-    
     <label style="font-size: 13px; color: #94a3b8; display: block; margin-bottom: 4px;">Nama Lengkap</label>
     <input id="rn" placeholder="Ketik nama asli kamu">
     <div style="font-size: 11px; color: #f87171; margin-top: -6px; margin-bottom: 12px; padding-left: 4px;">
       *Hanya dapat dilihat oleh Guru dan Dirimu Sendiri.
     </div>
-    
     <label style="font-size: 13px; color: #94a3b8; display: block; margin-bottom: 4px;">Kelas (Opsional)</label>
     <input id="rc" placeholder="Contoh: XI-IPA-1" style="margin-bottom: 12px;">
-    
     <label style="font-size: 13px; color: #94a3b8; display: block; margin-bottom: 4px;">Username (Nama Samaran)</label>
     <input id="ru" placeholder="Ketik username unik">
     <div id="username-status" style="font-size: 11px; margin-top: -6px; margin-bottom: 12px; padding-left: 4px;">
       <span style="color: #fbbf24;">*Nama ini yang akan tampil di Papan Juara dan Duel.</span>
     </div>
-    
     <label style="font-size: 13px; color: #94a3b8; display: block; margin-bottom: 4px;">Password</label>
     <input id="rp" type="password" placeholder="Ketik password">
-    
     <button class="btn-primary" onclick="doRegister()" style="margin-top: 12px;">Daftar</button>
   </div>
   <div id="msg" class="msg"></div>
@@ -49,7 +44,7 @@ async function doLogin() {
   const r = await fetch('/api/login', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ username: lu.value, password: lp.value }) });
   if (r.ok) {
     const data = await r.json();
-    location.href = data.redirect; // Arahkan ke /admin atau /lobby
+    location.href = data.redirect;
   } else {
     show((await r.json()).error, true);
   }
@@ -61,7 +56,6 @@ async function doRegister() {
   else show((await r.json()).error, true);
 }
 
-// Cek Username saat siswa pindah dari kolom username
 document.getElementById('ru').addEventListener('blur', async (e) => {
   const val = e.target.value.trim();
   const statusEl = document.getElementById('username-status');

@@ -6,7 +6,7 @@
 <title>Dashboard Guru - Quiz Duel</title>
 <link rel="stylesheet" href="/app.css">
 <style>
-  .admin-container { max-width: 900px; margin: 0 auto; padding: 20px; }
+  .admin-container { max-width: 1000px; margin: 0 auto; padding: 20px; }
   .tabs { display: flex; gap: 10px; margin-bottom: 20px; overflow-x: auto; padding-bottom: 5px; }
   .tab { padding: 10px 16px; background: #1e293b; color: #94a3b8; border-radius: 8px; cursor: pointer; font-weight: bold; white-space: nowrap; border: 1px solid #334155; font-size: 14px; }
   .tab.active { background: #3b82f6; color: white; border-color: #3b82f6; }
@@ -26,19 +26,16 @@
   .bank-card.active { border-color: #fbbf24; box-shadow: 0 0 10px rgba(251,191,36,0.2); }
   .filter-box { display: flex; gap: 10px; margin-bottom: 15px; flex-wrap: wrap; }
   .filter-box input { flex: 1; min-width: 200px; margin: 0; padding: 10px; }
-  .btn-sm { padding: 6px 12px; font-size: 12px; border-radius: 6px; cursor: pointer; border: none; color: white; font-weight: bold; }
+  .btn-sm { padding: 6px 12px; font-size: 12px; border-radius: 6px; cursor: pointer; border: none; color: white; font-weight: bold; margin-bottom: 4px; }
   .btn-edit { background: #f59e0b; }
   .btn-delete { background: #ef4444; }
   .btn-detail { background: #3b82f6; }
-  
-  /* Modal */
+  .btn-freeze { background: #7f1d1d; border: 1px solid #f87171; }
+  .btn-unfreeze { background: #166534; border: 1px solid #4ade80; }
   .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; padding: 20px; z-index: 100; }
   .modal-box { background: #1e293b; padding: 24px; border-radius: 12px; width: 100%; max-width: 500px; border: 1px solid #334155; max-height: 90vh; overflow-y: auto; }
   .modal-title { font-size: 18px; font-weight: bold; margin-bottom: 16px; color: #60a5fa; }
-  
-  /* Question Stat List */
-  .q-stat-list { background: #0f172a; padding: 12px; border-radius: 8px; margin-bottom: 10px; font-family: monospace; font-size: 12px; white-space: pre-wrap; border-left: 4px solid #ef4444; }
-  .q-stat-list.good { border-left-color: #4ade80; }
+  .row-anomaly { background: rgba(239, 68, 68, 0.1); border-left: 3px solid #ef4444; }
 </style>
 </head>
 <body>
@@ -50,34 +47,22 @@
   </div>
 
   <div class="tabs">
-    <div class="tab active" onclick="switchTab('ringkasan')">Ringkasan</div>
-    <div class="tab" onclick="switchTab('siswa')">Data Siswa</div>
-    <div class="tab" onclick="switchTab('bank')">Bank Soal</div>
-    <div class="tab" onclick="switchTab('analitik')">Analitik Soal</div>
+    <div class="tab active" onclick="switchTab('ringkasan', this)">Ringkasan</div>
+    <div class="tab" onclick="switchTab('siswa', this)">Data Siswa</div>
+    <div class="tab" onclick="switchTab('bank', this)">Bank Soal</div>
+    <div class="tab" onclick="switchTab('analitik', this)">Analitik Soal</div>
   </div>
 
   <!-- PANEL 1: RINGKASAN -->
   <div id="panel-ringkasan" class="panel active">
     <div class="stats-grid">
-      <div class="stat-card">
-        <h3>Total Siswa</h3>
-        <div class="value" id="stat-students">-</div>
-      </div>
-      <div class="stat-card">
-        <h3>Total Duel Dimainkan</h3>
-        <div class="value" id="stat-matches">-</div>
-      </div>
-      <div class="stat-card">
-        <h3>Bank Soal Aktif</h3>
-        <div class="value" id="stat-bank" style="color: #fbbf24;">-</div>
-      </div>
+      <div class="stat-card"><h3>Total Siswa</h3><div class="value" id="stat-students">-</div></div>
+      <div class="stat-card"><h3>Total Duel Dimainkan</h3><div class="value" id="stat-matches">-</div></div>
+      <div class="stat-card"><h3>Bank Soal Aktif</h3><div class="value" id="stat-bank" style="color: #fbbf24;">-</div></div>
     </div>
     <h2 style="font-size: 16px; margin-bottom: 10px;">⚡ 5 Duel Terakhir</h2>
     <div class="table-wrap">
-      <table>
-        <thead><tr><th>Pemain 1</th><th>Pemain 2</th><th>Pemenang</th></tr></thead>
-        <tbody id="recent-matches"></tbody>
-      </table>
+      <table><thead><tr><th>Pemain 1</th><th>Pemain 2</th><th>Pemenang</th></tr></thead><tbody id="recent-matches"></tbody></table>
     </div>
   </div>
 
@@ -94,7 +79,7 @@
             <th>Nama Asli</th>
             <th>Username</th>
             <th>Poin</th>
-            <th>Winrate</th>
+            <th>Waktu Jawab</th>
             <th>Akurasi</th>
             <th>Aksi</th>
           </tr>
@@ -112,41 +97,31 @@
 
   <!-- PANEL 4: ANALITIK SOAL -->
   <div id="panel-analitik" class="panel">
-    <div style="display: grid; grid-template-columns: 1fr; gap: 20px;">
-      <div>
-        <h2 style="font-size: 15px; color: #f87171; margin-bottom: 10px;">🔥 5 Soal Paling Sering Salah</h2>
-        <div id="hardest-questions"></div>
-      </div>
-      <div>
-        <h2 style="font-size: 15px; color: #4ade80; margin-bottom: 10px;">✅ 5 Soal Paling Sering Benar</h2>
-        <div id="easiest-questions"></div>
-      </div>
+    <p style="font-size: 13px; color: #94a3b8; margin-bottom: 15px;">Statistik seluruh soal dari semua bank. Data diurutkan dari soal yang paling sering dijawab salah.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Bank</th><th>Kode Soal</th><th>Dijawab</th><th>Akurasi (Benar)</th></tr></thead>
+        <tbody id="analytics-list"><tr><td colspan="4" style="text-align: center;">Memuat data...</td></tr></tbody>
+      </table>
     </div>
   </div>
 </div>
 
-<!-- ================= MODAL MODAL ================= -->
-
-<!-- Modal CRUD Siswa -->
+<!-- MODAL CRUD SISWA -->
 <div id="modal-student" class="modal-overlay hidden">
   <div class="modal-box">
     <div class="modal-title" id="modal-student-title">Tambah Siswa</div>
     <input type="hidden" id="student-id">
-    
     <label style="font-size: 12px; color: #94a3b8;">Nama Lengkap</label>
     <input type="text" id="student-name" placeholder="Nama asli siswa">
-    
     <label style="font-size: 12px; color: #94a3b8;">Username (Nama Tampil)</label>
     <input type="text" id="student-username" placeholder="Username unik">
-    
     <label style="font-size: 12px; color: #94a3b8;">Kelas</label>
     <input type="text" id="student-class" placeholder="Contoh: XI-IPA-1">
-    
     <div id="password-field-wrap">
       <label style="font-size: 12px; color: #94a3b8;">Password (Hanya saat tambah baru)</label>
       <input type="text" id="student-password" placeholder="Password awal">
     </div>
-
     <div style="display: flex; gap: 10px; margin-top: 20px;">
       <button class="btn-primary" style="margin: 0;" onclick="saveStudent()">Simpan</button>
       <button class="btn-secondary" style="margin: 0;" onclick="closeModal('modal-student')">Batal</button>
@@ -154,7 +129,7 @@
   </div>
 </div>
 
-<!-- Modal Reset Password -->
+<!-- MODAL RESET PASSWORD -->
 <div id="modal-reset" class="modal-overlay hidden">
   <div class="modal-box">
     <div class="modal-title">Reset Password</div>
@@ -168,11 +143,11 @@
   </div>
 </div>
 
-<!-- Modal Detail Siswa -->
+<!-- MODAL DETAIL SISWA -->
 <div id="modal-detail" class="modal-overlay hidden">
   <div class="modal-box" style="max-width: 600px;">
     <div class="modal-title">Detail Siswa</div>
-    <div id="detail-info" style="margin-bottom: 20px; background: #0f172a; padding: 12px; border-radius: 8px;"></div>
+    <div id="detail-info" style="margin-bottom: 20px; background: #0f172a; padding: 12px; border-radius: 8px; line-height: 1.6;"></div>
     <h3 style="font-size: 14px; color: #94a3b8; margin-bottom: 10px;">10 Duel Terakhir</h3>
     <div id="detail-matches" style="font-size: 13px; max-height: 250px; overflow-y: auto;"></div>
     <button class="btn-primary" style="margin-top: 20px;" onclick="closeModal('modal-detail')">Tutup</button>
@@ -194,78 +169,108 @@ async function init() {
   loadAnalytics();
 }
 
-function switchTab(tabId) {
+function switchTab(tabId, el) {
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
-  event.target.classList.add('active');
+  el.classList.add('active');
   document.getElementById('panel-' + tabId).classList.add('active');
 }
 
-// --- RINGKASAN ---
 async function loadOverview() {
-  const r = await fetch('/api/admin/stats');
-  const data = await r.json();
-  document.getElementById('stat-students').textContent = data.students;
-  document.getElementById('stat-matches').textContent = data.matches;
-  document.getElementById('stat-bank').textContent = data.activeBank.name;
-  
-  const tbody = document.getElementById('recent-matches');
-  tbody.innerHTML = '';
-  if (data.recentMatches.length === 0) tbody.innerHTML = '<tr><td colspan="3" style="text-align: center;">Belum ada duel.</td></tr>';
-  else {
-    data.recentMatches.forEach(m => {
+  try {
+    const r = await fetch('/api/admin/stats');
+    const data = await r.json();
+    if (data.error) return;
+    document.getElementById('stat-students').textContent = data.students;
+    document.getElementById('stat-matches').textContent = data.matches;
+    document.getElementById('stat-bank').textContent = data.activeBank.name;
+    
+    const tbody = document.getElementById('recent-matches');
+    tbody.innerHTML = data.recentMatches.map(m => {
       const p1 = m.name_a || 'Unknown';
       const p2 = m.is_bot ? 'Komputer' : (m.name_b || 'Unknown');
       const winner = m.winner === 'a' ? p1 : p2;
-      tbody.innerHTML += `<tr><td>${p1}</td><td>${p2}</td><td style="color: #4ade80; font-weight: bold;">${winner}</td></tr>`;
-    });
-  }
+      return `<tr><td>${p1}</td><td>${p2}</td><td style="color: #4ade80; font-weight: bold;">${winner}</td></tr>`;
+    }).join('') || '<tr><td colspan="3" style="text-align: center;">Belum ada duel.</td></tr>';
+  } catch(e) {}
 }
 
-// --- DATA SISWA (CRUD) ---
 async function loadStudents() {
-  const r = await fetch('/api/admin/students');
-  studentsData = await r.json();
-  renderStudents();
+  try {
+    const r = await fetch('/api/admin/students');
+    const data = await r.json();
+    if (!Array.isArray(data)) return;
+    studentsData = data;
+    renderStudents();
+  } catch(e) {}
 }
 
 function renderStudents() {
   const search = document.getElementById('search-student').value.toLowerCase();
   const tbody = document.getElementById('student-list');
-  tbody.innerHTML = '';
   
-  const filtered = studentsData.filter(s => s.full_name.toLowerCase().includes(search) || s.username.toLowerCase().includes(search));
+  const filtered = studentsData.filter(s => 
+    s.full_name.toLowerCase().includes(search) || s.username.toLowerCase().includes(search)
+  );
+
   if (filtered.length === 0) {
     tbody.innerHTML = '<tr><td colspan="6" style="text-align: center;">Siswa tidak ditemukan.</td></tr>';
     return;
   }
 
-  filtered.forEach(s => {
-    const akurasi = s.total_answered > 0 ? Math.round((s.correct / s.total_answered) * 100) + '%' : '-';
-    const winRate = s.matches_played > 0 ? Math.round((s.wins / s.matches_played) * 100) + '%' : '-';
-    tbody.innerHTML += `
-      <tr>
-        <td style="font-weight: bold; color: #f87171;">${s.full_name}</td>
+  tbody.innerHTML = filtered.map(s => {
+    const totalAnswered = Number(s.total_answered) || 0;
+    const hasAnswered = totalAnswered > 0;
+    
+    const accVal = Number(s.accuracy) || 0;
+    const timeVal = Number(s.avg_time_sec) || 0;
+
+    const akurasiText = hasAnswered ? accVal + '%' : '-';
+    const waktuText = hasAnswered ? timeVal + 's' : '-';
+    const warnaAkurasi = hasAnswered ? (accVal >= 80 ? '#4ade80' : (accVal >= 50 ? '#fbbf24' : '#f87171')) : '#94a3b8';
+    
+    const rowClass = s.isAnomaly ? 'row-anomaly' : '';
+    
+    let tombolBekukan = s.is_frozen 
+      ? `<button class="btn-sm btn-unfreeze" onclick="toggleFreeze('${s.id}', false)">Buka Blokir</button>`
+      : `<button class="btn-sm btn-freeze" onclick="toggleFreeze('${s.id}', true)">Bekukan</button>`;
+
+    return `
+      <tr class="${rowClass}">
+        <td>
+          <div style="font-weight: bold; color: #f87171;">${s.full_name}</div>
+          ${s.isAnomaly ? `<div style="font-size:10px; color:#f87171; font-weight:bold;">⚠️ ${s.anomalyReason}</div>` : ''}
+          ${s.is_frozen ? `<div style="font-size:10px; color:#f87171; font-weight:bold;">🔒 DIBEKUKAN</div>` : ''}
+        </td>
         <td style="color: #60a5fa;">${s.username}</td>
         <td><b>${s.rating}</b></td>
-        <td style="color: #fbbf24;">${winRate}</td>
-        <td style="color: #4ade80;">${akurasi}</td>
+        <td style="color: #e2e8f0;">${waktuText}</td>
+        <td style="color: ${warnaAkurasi}; font-weight:bold;">${akurasiText}</td>
         <td>
           <div style="display: flex; gap: 4px; flex-wrap: wrap;">
             <button class="btn-sm btn-detail" onclick="openDetail('${s.id}')">Detail</button>
             <button class="btn-sm btn-edit" onclick="editStudent('${s.id}')">Edit</button>
-            <button class="btn-sm" style="background:#6366f1;" onclick="openReset('${s.id}', '${s.full_name}')">Reset</button>
-            <button class="btn-sm btn-delete" onclick="deleteStudent('${s.id}', '${s.full_name}')">Hapus</button>
+            <button class="btn-sm" style="background:#6366f1;" onclick="openReset('${s.id}')">Reset Pass</button>
+            ${tombolBekukan}
+            <button class="btn-sm btn-delete" onclick="deleteStudent('${s.id}')">Hapus</button>
           </div>
         </td>
       </tr>
     `;
-  });
+  }).join('');
 }
 
-// Modal logic
-function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
+async function toggleFreeze(id, freeze) {
+  const msg = freeze ? 'Bekukan akun ini? Siswa tidak akan bisa login.' : 'Buka blokir akun ini?';
+  if (!confirm(msg)) return;
+  const r = await fetch(`/api/admin/students/${id}/freeze`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ frozen: freeze })
+  });
+  if (r.ok) loadStudents();
+  else alert('Gagal mengubah status akun.');
+}
 
+function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
 function openModalStudent() {
   document.getElementById('modal-student-title').textContent = 'Tambah Siswa';
   document.getElementById('student-id').value = '';
@@ -276,7 +281,6 @@ function openModalStudent() {
   document.getElementById('password-field-wrap').style.display = 'block';
   document.getElementById('modal-student').classList.remove('hidden');
 }
-
 function editStudent(id) {
   const s = studentsData.find(x => x.id === id);
   if (!s) return;
@@ -285,10 +289,9 @@ function editStudent(id) {
   document.getElementById('student-name').value = s.full_name;
   document.getElementById('student-username').value = s.username;
   document.getElementById('student-class').value = s.class_code || '';
-  document.getElementById('password-field-wrap').style.display = 'none'; // Sembunyikan password
+  document.getElementById('password-field-wrap').style.display = 'none';
   document.getElementById('modal-student').classList.remove('hidden');
 }
-
 async function saveStudent() {
   const id = document.getElementById('student-id').value;
   const payload = {
@@ -297,148 +300,94 @@ async function saveStudent() {
     class_code: document.getElementById('student-class').value,
     password: document.getElementById('student-password').value
   };
-  
   const method = id ? 'PUT' : 'POST';
   const url = id ? '/api/admin/students/' + id : '/api/admin/students';
-
   const r = await fetch(url, { method, headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
-  const res = await r.json();
-  
-  if (r.ok) {
-    closeModal('modal-student');
-    loadStudents();
-    loadOverview();
-  } else {
-    alert('Gagal: ' + res.error);
-  }
+  if (r.ok) { closeModal('modal-student'); loadStudents(); loadOverview(); }
+  else { alert('Gagal: ' + (await r.json()).error); }
 }
-
-async function deleteStudent(id, name) {
-  if (!confirm(`Yakin ingin menghapus ${name}? Semua riwayat duelnya akan hilang.`)) return;
+async function deleteStudent(id) {
+  if (!confirm('Yakin ingin menghapus siswa ini?')) return;
   const r = await fetch('/api/admin/students/' + id, { method: 'DELETE' });
   if (r.ok) { loadStudents(); loadOverview(); }
-  else alert('Gagal menghapus siswa.');
 }
-
-function openReset(id, name) {
+function openReset(id) {
+  const s = studentsData.find(x => x.id === id);
   document.getElementById('reset-id').value = id;
-  document.getElementById('reset-name-display').textContent = name;
+  document.getElementById('reset-name-display').textContent = s.full_name;
   document.getElementById('reset-password').value = '';
   document.getElementById('modal-reset').classList.remove('hidden');
 }
-
 async function saveResetPassword() {
   const id = document.getElementById('reset-id').value;
   const newPassword = document.getElementById('reset-password').value;
   if (newPassword.length < 4) return alert('Password minimal 4 karakter');
-
   const r = await fetch(`/api/admin/students/${id}/reset-password`, {
     method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ newPassword })
   });
-  if (r.ok) { alert('Password berhasil direset!'); closeModal('modal-reset'); }
-  else alert('Gagal reset password.');
+  if (r.ok) { alert('Password direset!'); closeModal('modal-reset'); }
 }
-
 async function openDetail(id) {
   const r = await fetch(`/api/admin/students/${id}/detail`);
   const data = await r.json();
-  
   document.getElementById('detail-info').innerHTML = `
     <div><b>Nama:</b> ${data.info.full_name}</div>
     <div><b>Username:</b> ${data.info.username}</div>
     <div><b>Kelas:</b> ${data.info.class_code || '-'}</div>
-    <div><b>Poin Saat Ini:</b> ${data.info.rating}</div>
+    <div><b>Poin:</b> ${data.info.rating}</div>
     <div><b>Total Main:</b> ${data.info.matches_played} duel</div>
   `;
-
   const list = document.getElementById('detail-matches');
-  list.innerHTML = '';
-  if (data.matches.length === 0) list.innerHTML = '<div style="color: #94a3b8;">Belum ada riwayat duel.</div>';
-  else {
-    data.matches.forEach(m => {
-      const isA = m.player_a_id === id; // Butuh player_a_id dari backend
+  list.innerHTML = data.matches.length === 0 ? '<div style="color: #94a3b8;">Belum ada riwayat.</div>' 
+    : data.matches.map(m => {
+      const isA = m.player_a_id === id;
       const iWon = m.winner === (isA ? 'a' : 'b');
       const color = iWon ? '#4ade80' : '#f87171';
       const opp = m.is_bot ? 'Komputer' : (isA ? m.name_b : m.name_a);
-      
-      list.innerHTML += `
-        <div style="padding: 8px 0; border-bottom: 1px solid #334155; display: flex; justify-content: space-between;">
-          <span style="color: ${color}; font-weight: bold;">${iWon ? 'Menang' : 'Kalah'}</span>
-          <span>vs ${opp}</span>
-        </div>
-      `;
-    });
-  }
-  
+      return `<div style="padding: 8px 0; border-bottom: 1px solid #334155; display: flex; justify-content: space-between;">
+        <span style="color: ${color}; font-weight: bold;">${iWon ? 'Menang' : 'Kalah'}</span>
+        <span>vs ${opp}</span>
+      </div>`;
+    }).join('');
   document.getElementById('modal-detail').classList.remove('hidden');
 }
-
-// --- BANK SOAL ---
 async function loadBanks() {
   const r = await fetch('/api/admin/banks');
   const banks = await r.json();
+  if (!Array.isArray(banks)) return;
   const statR = await fetch('/api/admin/stats');
   const activeId = (await statR.json()).activeBank.active_bank_id;
-  
-  const container = document.getElementById('bank-list');
-  container.innerHTML = '';
-  banks.forEach(b => {
-    const isActive = b.id === activeId;
-    container.innerHTML += `
-      <div class="bank-card ${isActive ? 'active' : ''}">
-        <div>
-          <div style="font-weight: bold; font-size: 15px; color: ${isActive ? '#fbbf24' : '#e2e8f0'};">${b.name}</div>
-          <div style="font-size: 13px; color: #94a3b8; margin-top: 4px;">${b.total_questions} Soal tersedia</div>
-        </div>
-        ${isActive 
-          ? '<span style="color: #fbbf24; font-size: 12px; font-weight: bold; border: 1px solid #fbbf24; padding: 4px 8px; border-radius: 4px;">Aktif</span>'
-          : `<button class="btn-primary" style="width: auto; padding: 8px 16px; font-size: 13px; margin: 0;" onclick="changeBank(${b.id})">Aktifkan</button>`
-        }
+  document.getElementById('bank-list').innerHTML = banks.map(b => `
+    <div class="bank-card ${b.id === activeId ? 'active' : ''}">
+      <div>
+        <div style="font-weight: bold; color: ${b.id === activeId ? '#fbbf24' : '#e2e8f0'};">${b.name}</div>
+        <div style="font-size: 13px; color: #94a3b8;">${b.total_questions} Soal</div>
       </div>
-    `;
-  });
+      ${b.id === activeId ? '<span style="color: #fbbf24; font-size: 12px; font-weight: bold; border: 1px solid #fbbf24; padding: 4px 8px; border-radius: 4px;">Aktif</span>'
+        : `<button class="btn-primary" style="width: auto; padding: 8px 16px; font-size: 13px; margin: 0;" onclick="changeBank(${b.id})">Aktifkan</button>`}
+    </div>
+  `).join('');
 }
-
 async function changeBank(bankId) {
   const r = await fetch('/api/admin/set-bank', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ bankId }) });
   if (r.ok) { loadBanks(); loadOverview(); loadAnalytics(); }
-  else alert('Gagal mengganti bank soal.');
 }
-
-// --- ANALITIK SOAL ---
 async function loadAnalytics() {
   const r = await fetch('/api/admin/questions/stats');
   const data = await r.json();
-  
-  const hardList = document.getElementById('hardest-questions');
-  hardList.innerHTML = '';
-  if (data.hardest.length === 0) hardList.innerHTML = '<div style="color: #94a3b8; font-size:14px;">Belum ada cukup data jawaban.</div>';
-  else {
-    data.hardest.forEach(q => {
-      hardList.innerHTML += `
-        <div class="q-stat-list">
-          <div style="color: #f87171; font-weight: bold; margin-bottom: 5px;">Akurasi: ${q.accuracy}% (${q.correct}/${q.total} benar)</div>
-          ${q.code}
-        </div>
-      `;
-    });
-  }
-
-  const easyList = document.getElementById('easiest-questions');
-  easyList.innerHTML = '';
-  if (data.easiest.length === 0) easyList.innerHTML = '<div style="color: #94a3b8; font-size:14px;">Belum ada cukup data jawaban.</div>';
-  else {
-    data.easiest.forEach(q => {
-      easyList.innerHTML += `
-        <div class="q-stat-list good">
-          <div style="color: #4ade80; font-weight: bold; margin-bottom: 5px;">Akurasi: ${q.accuracy}% (${q.correct}/${q.total} benar)</div>
-          ${q.code}
-        </div>
-      `;
-    });
-  }
+  const tbody = document.getElementById('analytics-list');
+  if (!Array.isArray(data) || data.length === 0) { tbody.innerHTML = '<tr><td colspan="4" style="text-align: center;">Belum ada data.</td></tr>'; return; }
+  tbody.innerHTML = data.map(q => {
+    const color = q.accuracy < 50 ? '#f87171' : (q.accuracy < 75 ? '#fbbf24' : '#4ade80');
+    const safeCode = q.code.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    return `<tr>
+      <td style="text-align: center; font-weight: bold;">${q.bank_id}</td>
+      <td><div style="font-family: monospace; font-size: 12px; white-space: pre-wrap; background: #0f172a; padding: 8px; border-radius: 4px;">${safeCode}</div></td>
+      <td style="text-align: center;">${q.total}</td>
+      <td style="color: ${color}; font-weight: bold; text-align: center;">${q.accuracy}%</td>
+    </tr>`;
+  }).join('');
 }
-
 async function logout() {
   await fetch('/api/logout', { method: 'POST' });
   location.href = '/';
