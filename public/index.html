@@ -15,29 +15,79 @@
     <input id="lp" type="password" placeholder="Password" autocomplete="current-password">
     <button class="btn-primary" onclick="doLogin()">Masuk</button>
   </div>
+  
   <div class="card">
-    <h2>Daftar</h2>
-    <input id="ru" placeholder="Username (unik)">
-    <input id="rp" type="password" placeholder="Password">
-    <input id="rn" placeholder="Nama lengkap">
-    <input id="rc" placeholder="Kelas (opsional)">
-    <button class="btn-primary" onclick="doRegister()">Daftar</button>
+    <h2>Daftar Akun Baru</h2>
+    
+    <label style="font-size: 13px; color: #94a3b8; display: block; margin-bottom: 4px;">Nama Lengkap</label>
+    <input id="rn" placeholder="Ketik nama asli kamu">
+    <div style="font-size: 11px; color: #f87171; margin-top: -6px; margin-bottom: 12px; padding-left: 4px;">
+      *Hanya dapat dilihat oleh Guru dan Dirimu Sendiri.
+    </div>
+    
+    <label style="font-size: 13px; color: #94a3b8; display: block; margin-bottom: 4px;">Kelas (Opsional)</label>
+    <input id="rc" placeholder="Contoh: XI-IPA-1" style="margin-bottom: 12px;">
+    
+    <label style="font-size: 13px; color: #94a3b8; display: block; margin-bottom: 4px;">Username (Nama Samaran)</label>
+    <input id="ru" placeholder="Ketik username unik">
+    <div id="username-status" style="font-size: 11px; margin-top: -6px; margin-bottom: 12px; padding-left: 4px;">
+      <span style="color: #fbbf24;">*Nama ini yang akan tampil di Papan Juara dan Duel.</span>
+    </div>
+    
+    <label style="font-size: 13px; color: #94a3b8; display: block; margin-bottom: 4px;">Password</label>
+    <input id="rp" type="password" placeholder="Ketik password">
+    
+    <button class="btn-primary" onclick="doRegister()" style="margin-top: 12px;">Daftar</button>
   </div>
   <div id="msg" class="msg"></div>
 </div>
 <script>
 const msg = document.getElementById('msg');
 function show(t, e) { msg.textContent = t; msg.className = 'msg ' + (e ? 'error' : 'success'); }
+
 async function doLogin() {
   const r = await fetch('/api/login', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ username: lu.value, password: lp.value }) });
   if (r.ok) location.href = '/lobby';
   else show((await r.json()).error, true);
 }
+
 async function doRegister() {
   const r = await fetch('/api/register', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ username: ru.value, password: rp.value, fullName: rn.value, classCode: rc.value }) });
   if (r.ok) location.href = '/lobby';
   else show((await r.json()).error, true);
 }
+
+// Cek Username saat siswa pindah dari kolom username
+document.getElementById('ru').addEventListener('blur', async (e) => {
+  const val = e.target.value.trim();
+  const statusEl = document.getElementById('username-status');
+  
+  if (!val) { 
+    statusEl.innerHTML = '<span style="color: #fbbf24;">*Nama ini yang akan tampil di Papan Juara dan Duel.</span>'; 
+    return; 
+  }
+  
+  if (/\s/.test(val)) {
+    statusEl.innerHTML = '<span style="color: #f87171;">❌ Tidak boleh pakai spasi</span>';
+    return;
+  }
+
+  statusEl.innerHTML = '<span style="color: #94a3b8;">⏳ Mengecek ketersediaan...</span>';
+  
+  try {
+    const r = await fetch('/api/check-username?username=' + encodeURIComponent(val));
+    const data = await r.json();
+    
+    if (data.available) {
+      statusEl.innerHTML = '<span style="color: #4ade80;">✅ Username tersedia! (Akan tampil di game)</span>';
+    } else {
+      statusEl.innerHTML = '<span style="color: #f87171;">❌ Username sudah dipakai</span>';
+    }
+  } catch (err) {
+    statusEl.innerHTML = '';
+  }
+});
+
 fetch('/api/me').then(r => { if (r.ok) location.href = '/lobby'; });
 </script>
 </body>

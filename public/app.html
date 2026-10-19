@@ -15,7 +15,10 @@
         <div class="name" id="name">...</div>
         <div class="rating">Poin: <b id="rating">-</b></div>
       </div>
-      <button class="btn-logout" onclick="logout()">Keluar</button>
+      <div style="display:flex; gap: 8px;">
+        <button class="btn-logout" onclick="openProfile()">Profil</button>
+        <button class="btn-logout" onclick="logout()">Keluar</button>
+      </div>
     </div>
     <div class="card center">
       <div id="status" class="status">Siap menerima tantangan</div>
@@ -25,7 +28,6 @@
       <button class="btn-secondary" onclick="openLeaderboard()" style="margin-top: 20px;">🏆 Papan Juara</button>
     </div>
     
-    <!-- RIWAYAT DUEL -->
     <div class="card" id="history-card" style="display: none;">
       <h2>5 Duel Terakhir</h2>
       <div id="history-list" style="font-size: 14px;"></div>
@@ -79,16 +81,46 @@
   </div>
 </div>
 
+<div id="profile-modal" class="end hidden">
+  <div class="end-content">
+    <h2 style="color: #60a5fa; margin-bottom: 16px;">👤 Pengaturan Akun</h2>
+    
+    <div style="text-align: left; margin-bottom: 20px; font-size: 14px; background: #0f172a; padding: 12px; border-radius: 8px;">
+      <div style="color: #f87171; margin-bottom: 4px; font-size: 11px;">🔒 Rahasia (Hanya Kamu & Guru):</div>
+      <div id="prof-fullname" style="font-weight: bold; margin-bottom: 4px;">...</div>
+      <div id="prof-class" style="font-weight: bold; color: #94a3b8; font-size: 12px; margin-bottom: 12px;">...</div>
+      
+      <div style="color: #60a5fa; margin-bottom: 4px; font-size: 11px;">🌐 Publik (Tampil di Game):</div>
+      <div id="prof-username-display" style="font-weight: bold;">...</div>
+    </div>
+
+    <div style="text-align: left;">
+      <label style="font-size: 13px; color: #94a3b8;">Ganti Username (Nama Tampil):</label>
+      <input id="prof-new-username" placeholder="Username baru..." style="margin-top:4px; margin-bottom:4px;">
+      <div id="prof-username-status" style="font-size: 12px; margin-bottom: 10px; padding-left: 4px;"></div>
+      
+      <label style="font-size: 13px; color: #94a3b8;">Ganti Password (Opsional):</label>
+      <input id="prof-new-password" type="password" placeholder="Password baru..." style="margin-top:4px;">
+    </div>
+
+    <button class="btn-primary" onclick="saveProfile()" style="margin-top: 16px;">Simpan Perubahan</button>
+    <button class="btn-secondary" onclick="closeProfile()">Batal</button>
+  </div>
+</div>
+
 <script src="/socket.io/socket.io.js"></script>
 <script>
 let socket, matchInfo = null, currentRound = 0, answered = false, timerInterval;
 let isPlayerB = false;
+let myProfileData = null;
 
 async function init() {
   const r = await fetch('/api/me');
   if (!r.ok) return location.href = '/';
   const me = await r.json();
-  document.getElementById('name').textContent = me.full_name;
+  myProfileData = me;
+  
+  document.getElementById('name').textContent = me.username;
   document.getElementById('rating').textContent = me.rating;
 
   socket = io();
@@ -140,10 +172,9 @@ async function init() {
     
     const myName = isPlayerB ? data.playerB.name : data.playerA.name;
     const oppName = isPlayerB ? data.playerA.name : data.playerB.name;
-    const oppIsBot = isPlayerB ? false : data.isBot;
-
-    document.getElementById('name-a').textContent = myName + ' (Kamu)';
-    document.getElementById('name-b').textContent = oppName + (oppIsBot ? ' (Komputer)' : '');
+    
+    document.getElementById('name-a').textContent = myName;
+    document.getElementById('name-b').textContent = oppName;
   });
 
   socket.on('round:start', onRoundStart);
@@ -153,12 +184,74 @@ async function init() {
   loadHistory();
 }
 
+async function openProfile() {
+  document.getElementById('prof-fullname').textContent = myProfileData.full_name;
+  document.getElementById('prof-class').textContent = myProfileData.class_code || '-';
+  document.getElementById('prof-username-display').textContent = myProfileData.username;
+  document.getElementById('prof-new-username').value = myProfileData.username;
+  document.getElementById('prof-new-password').value = '';
+  document.getElementById('prof-username-status').innerHTML = '';
+  document.getElementById('profile-modal').classList.remove('hidden');
+}
+
+function closeProfile() {
+  document.getElementById('profile-modal').classList.add('hidden');
+}
+
+document.getElementById('prof-new-username').addEventListener('blur', async (e) => {
+  const val = e.target.value.trim();
+  const statusEl = document.getElementById('prof-username-status');
+  
+  if (!val || val === myProfileData.username) { statusEl.innerHTML = ''; return; }
+  
+  if (/\s/.test(val)) {
+    statusEl.innerHTML = '<span style="color: #f87171;">❌ Tidak boleh pakai spasi</span>';
+    return;
+  }
+
+  statusEl.innerHTML = '<span style="color: #94a3b8;">⏳ Mengecek...</span>';
+  
+  try {
+    const r = await fetch('/api/check-username?username=' + encodeURIComponent(val) + '&excludeId=' + myProfileData.id);
+    const data = await r.json();
+    
+    if (data.available) statusEl.innerHTML = '<span style="color: #4ade80;">✅ Username tersedia!</span>';
+    else statusEl.innerHTML = '<span style="color: #f87171;">❌ Username sudah dipakai siswa lain</span>';
+  } catch (err) {
+    statusEl.innerHTML = '';
+  }
+});
+
+async function saveProfile() {
+  const newUsername = document.getElementById('prof-new-username').value;
+  const newPassword = document.getElementById('prof-new-password').value;
+  if (!newUsername) return alert('Username tidak boleh kosong');
+
+  try {
+    const r = await fetch('/api/update-profile', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ newUsername, newPassword })
+    });
+    const res = await r.json();
+
+    if (r.ok) {
+      alert('Profil berhasil diperbarui!');
+      location.reload();
+    } else {
+      alert(res.error);
+    }
+  } catch (e) {
+    alert('Gagal menyimpan perubahan.');
+  }
+}
+
 function updateHpBar(hp, elementId) {
   const el = document.getElementById(elementId);
   el.style.width = hp + '%';
-  if (hp > 50) el.style.backgroundColor = '#4ade80'; // Hijau
-  else if (hp > 25) el.style.backgroundColor = '#fbbf24'; // Kuning
-  else el.style.backgroundColor = '#f87171'; // Merah
+  if (hp > 50) el.style.backgroundColor = '#4ade80';
+  else if (hp > 25) el.style.backgroundColor = '#fbbf24';
+  else el.style.backgroundColor = '#f87171';
 }
 
 function search() {
@@ -206,7 +299,7 @@ function onRoundStart(data) {
   document.getElementById('reveal').classList.add('hidden');
   clearInterval(timerInterval);
   
-  const totalSeconds = 60; 
+  const totalSeconds = 90; // <-- 90 DETIK
   let timeLeft = totalSeconds;
   document.getElementById('timer-fill').style.width = '100%';
   
@@ -268,11 +361,8 @@ function onReveal(data) {
   }
 
   if (navigator.vibrate) {
-    if (data.reason.includes(mySide + '_correct') || data.reason.includes(mySide + '_faster')) {
-      navigator.vibrate(100);
-    } else {
-      navigator.vibrate([100, 50, 100]);
-    }
+    if (data.reason.includes(mySide + '_correct') || data.reason.includes(mySide + '_faster')) navigator.vibrate(100);
+    else navigator.vibrate([100, 50, 100]);
   }
 
   document.getElementById('reveal-title').textContent = title;
@@ -321,10 +411,7 @@ function onEnd(data) {
 async function openLeaderboard() {
   try {
     const r = await fetch('/api/leaderboard');
-    if (!r.ok) {
-      const errData = await r.json();
-      return alert('Gagal memuat peringkat: ' + (errData.error || r.statusText));
-    }
+    if (!r.ok) return alert('Gagal memuat peringkat');
     const data = await r.json();
     
     const list = document.getElementById('leaderboard-list');
@@ -334,7 +421,7 @@ async function openLeaderboard() {
       const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
       list.innerHTML += `
         <div style="display:flex; justify-content:space-between; padding: 6px 0; border-bottom: 1px solid #334155;">
-          <span>${medal} ${user.full_name}</span>
+          <span>${medal} ${user.username}</span>
           <span style="color:#60a5fa; font-weight:bold;">${user.rating}</span>
         </div>
       `;
@@ -343,7 +430,6 @@ async function openLeaderboard() {
     document.getElementById('my-rank-info').innerHTML = `
       Posisi Kamu: Peringkat ${data.myRank} <br> Poin: ${data.myRating}
     `;
-    
     document.getElementById('leaderboard-modal').classList.remove('hidden');
   } catch (err) {
     alert('Terjadi kesalahan jaringan: ' + err.message);
@@ -359,7 +445,6 @@ async function loadHistory() {
     const r = await fetch('/api/history');
     if (!r.ok) return;
     const data = await r.json();
-    
     if (data.length === 0) return;
     
     const list = document.getElementById('history-list');
@@ -387,9 +472,7 @@ async function loadHistory() {
     });
     
     document.getElementById('history-card').style.display = 'block';
-  } catch (e) {
-    console.log('Gagal memuat riwayat');
-  }
+  } catch (e) {}
 }
 
 async function logout() {

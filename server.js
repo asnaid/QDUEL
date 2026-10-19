@@ -15,13 +15,16 @@ app.use(express.json());
 app.use(cookieParser());
 app.use(express.static('public'));
 
-// Auto-migrate: Menambahkan kolom session_token jika belum ada
-pool.query('ALTER TABLE students ADD COLUMN IF NOT EXISTS session_token TEXT')
-  .catch(e => console.log('Info migrasi DB:', e.message));
+// Auto-migrate
+pool.query('ALTER TABLE students ADD COLUMN IF NOT EXISTS session_token TEXT').catch(e => console.log(e.message));
 
+// --- AUTH & PROFIL ---
 app.post('/api/register', async (req, res) => {
   const { username, password, fullName, classCode } = req.body;
   if (!username || !password || !fullName) return res.status(400).json({ error: 'Data kurang' });
+  
+  if (/\s/.test(username)) return res.status(400).json({ error: 'Username tidak boleh mengandung spasi' });
+
   try {
     const exists = await pool.query('SELECT id FROM students WHERE username=$1', [username]);
     if (exists.rows.length) return res.status(400).json({ error: 'Username sudah dipakai' });
@@ -37,7 +40,6 @@ app.post('/api/register', async (req, res) => {
     res.cookie('token', token, { httpOnly: true, maxAge: 7 * 24 * 60 * 60 * 1000 });
     res.json({ ok: true });
   } catch (e) {
-    console.error(e);
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -53,7 +55,6 @@ app.post('/api/login', async (req, res) => {
     const token = uuid();
     await pool.query('UPDATE students SET session_token=$1 WHERE id=$2', [token, user.id]);
     
-    // Tendang paksa perangkat lama yang masih terhubung via socket
     for (const [id, s] of io.sockets.sockets) {
       if (s.user && s.user.id === user.id) {
         s.emit('force_logout');
@@ -65,7 +66,6 @@ app.post('/api/login', async (req, res) => {
     res.cookie('token', token, { httpOnly: true, maxAge: 7 * 24 * 60 * 60 * 1000 });
     res.json({ ok: true });
   } catch (e) {
-    console.error(e);
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -82,35 +82,77 @@ app.get('/api/me', async (req, res) => {
   if (!id || !token) return res.status(401).json({ error: 'Belum login' });
   
   try {
-    const r = await pool.query('SELECT id, username, full_name, rating, matches_played, session_token FROM students WHERE id=$1', [id]);
+    const r = await pool.query('SELECT id, username, full_name, rating, matches_played, session_token, class_code FROM students WHERE id=$1', [id]);
     const user = r.rows[0];
-    
     if (!user || user.session_token !== token) {
       res.clearCookie('sid'); res.clearCookie('token');
       return res.status(401).json({ error: 'Sesi berakhir' });
     }
-    
     res.json({
       id: user.id, username: user.username, full_name: user.full_name,
-      rating: user.rating, matches_played: user.matches_played
+      rating: user.rating, matches_played: user.matches_played, class_code: user.class_code
     });
   } catch (e) {
     res.status(500).json({ error: 'Server error' });
   }
 });
 
-// Endpoint Leaderboard
+app.post('/api/update-profile', async (req, res) => {
+  const id = req.cookies.sid;
+  if (!id) return res.status(401).json({ error: 'Belum login' });
+  const { newUsername, newPassword } = req.body;
+
+  if (!newUsername) return res.status(400).json({ error: 'Username tidak boleh kosong' });
+  if (/\s/.test(newUsername)) return res.status(400).json({ error: 'Username tidak boleh mengandung spasi' });
+
+  try {
+    const cek = await pool.query('SELECT id FROM students WHERE username=$1 AND id != $2', [newUsername, id]);
+    if (cek.rows.length > 0) return res.status(400).json({ error: 'Username sudah dipakai siswa lain' });
+
+    if (newPassword) {
+      const hash = bcrypt.hashSync(newPassword, 10);
+      await pool.query('UPDATE students SET username=$1, password_hash=$2 WHERE id=$3', [newUsername, hash, id]);
+    } else {
+      await pool.query('UPDATE students SET username=$1 WHERE id=$2', [newUsername, id]);
+    }
+
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.get('/api/check-username', async (req, res) => {
+  const { username, excludeId } = req.query;
+  if (!username) return res.json({ available: false });
+  if (/\s/.test(username)) return res.json({ available: false, error: 'Tidak boleh ada spasi' });
+
+  try {
+    let q = 'SELECT id FROM students WHERE username=$1';
+    let p = [username];
+    if (excludeId) {
+      q += ' AND id != $2';
+      p.push(excludeId);
+    }
+    const r = await pool.query(q, p);
+    if (r.rows.length > 0) return res.json({ available: false });
+    res.json({ available: true });
+  } catch (e) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// HANYA TAMPILKAN USERNAME
 app.get('/api/leaderboard', async (req, res) => {
   const id = req.cookies.sid;
   if (!id) return res.status(401).json({ error: 'Belum login' });
   
   try {
-    const top10 = await pool.query('SELECT full_name, rating FROM students ORDER BY rating DESC LIMIT 10');
+    const top10 = await pool.query('SELECT username, rating FROM students ORDER BY rating DESC LIMIT 10');
     const myData = await pool.query('SELECT rating FROM students WHERE id=$1', [id]);
+    if (myData.rows.length === 0) return res.status(404).json({ error: 'Not found' });
     
-    if (myData.rows.length === 0) return res.status(404).json({ error: 'Data siswa tidak ditemukan' });
     const myRating = myData.rows[0].rating;
-    
     const myRankData = await pool.query('SELECT COUNT(*) as total FROM students WHERE rating > $1', [myRating]);
     const myRank = Number(myRankData.rows[0].total) + 1;
 
@@ -120,25 +162,22 @@ app.get('/api/leaderboard', async (req, res) => {
   }
 });
 
-// Endpoint Riwayat Duel
+// HANYA TAMPILKAN USERNAME
 app.get('/api/history', async (req, res) => {
   const id = req.cookies.sid;
   if (!id) return res.status(401).json({ error: 'Belum login' });
   
   try {
     const q = `
-      SELECT 
-        m.id, m.winner, m.is_bot, m.hp_a, m.hp_b, 
-        m.rating_a_before, m.rating_a_after, 
-        m.rating_b_before, m.rating_b_after, 
+      SELECT m.id, m.winner, m.is_bot, m.hp_a, m.hp_b, 
+        m.rating_a_before, m.rating_a_after, m.rating_b_before, m.rating_b_after, 
         m.finished_at, m.player_a_id, m.player_b_id,
-        pA.full_name as name_a, pB.full_name as name_b
+        pA.username as name_a, pB.username as name_b
       FROM matches m
       LEFT JOIN students pA ON pA.id = m.player_a_id
       LEFT JOIN students pB ON pB.id = m.player_b_id
       WHERE m.player_a_id = $1 OR m.player_b_id = $1
-      ORDER BY m.finished_at DESC
-      LIMIT 5
+      ORDER BY m.finished_at DESC LIMIT 5
     `;
     const result = await pool.query(q, [id]);
     
@@ -146,9 +185,7 @@ app.get('/api/history', async (req, res) => {
       const isA = row.player_a_id === id;
       const iWon = row.winner === (isA ? 'a' : 'b');
       const oppName = row.is_bot ? 'Komputer' : (isA ? row.name_b : row.name_a);
-      const ratingChange = isA 
-        ? (row.rating_a_after - row.rating_a_before) 
-        : (row.rating_b_after - row.rating_b_before);
+      const ratingChange = isA ? (row.rating_a_after - row.rating_a_before) : (row.rating_b_after - row.rating_b_before);
         
       return {
         id: row.id, opponent: oppName || 'Unknown', isBot: row.is_bot,
@@ -156,15 +193,12 @@ app.get('/api/history', async (req, res) => {
         ratingChange: ratingChange, date: row.finished_at
       };
     });
-    
     res.json(history);
   } catch (e) {
-    console.error(e);
     res.status(500).json({ error: 'Server error' });
   }
 });
 
-// PENGAMAN: Validasi token SEBELUM membuka halaman Lobby
 app.get('/lobby', async (req, res) => {
   if (!req.cookies.sid || !req.cookies.token) return res.redirect('/');
   try {
@@ -174,9 +208,7 @@ app.get('/lobby', async (req, res) => {
       return res.redirect('/');
     }
     res.sendFile(__dirname + '/public/app.html');
-  } catch (e) {
-    res.redirect('/');
-  }
+  } catch (e) { res.redirect('/'); }
 });
 
 // ===== SOCKET.IO =====
@@ -199,39 +231,28 @@ io.use(async (socket, next) => {
   try {
     const r = await pool.query('SELECT * FROM students WHERE id=$1', [cookies.sid]);
     const user = r.rows[0];
-    
-    if (!user || user.session_token !== cookies.token) {
-      return next(new Error('Sesi berakhir, silakan login ulang'));
-    }
-    
+    if (!user || user.session_token !== cookies.token) return next(new Error('Sesi berakhir'));
     socket.user = user;
     next();
   } catch (e) { next(e); }
 });
 
 io.on('connection', (socket) => {
-  console.log('connect:', socket.user.username);
-
   for (const [id, s] of io.sockets.sockets) {
     if (s.id !== socket.id && s.user && s.user.id === socket.user.id) {
-      s.emit('force_logout');
-      s.disconnect(true);
+      s.emit('force_logout'); s.disconnect(true);
     }
   }
 
   socket.on('queue:join', async () => {
     for (const m of activeMatches.values()) {
       if (m.playerA.id === socket.user.id || m.playerB.id === socket.user.id) {
-        socket.emit('error:msg', { message: 'Kamu sedang bermain!' });
-        return;
+        socket.emit('error:msg', { message: 'Kamu sedang bermain!' }); return;
       }
     }
-
     if (queue.find(q => q.studentId === socket.user.id)) {
-      socket.emit('error:msg', { message: 'Kamu sudah berada di antrean!' });
-      return;
+      socket.emit('error:msg', { message: 'Kamu sudah berada di antrean!' }); return;
     }
-
     queue.push({ studentId: socket.user.id, socketId: socket.id, rating: socket.user.rating, joinedAt: Date.now() });
     socket.emit('queue:waiting');
     tryMatch();
@@ -252,16 +273,13 @@ io.on('connection', (socket) => {
   socket.on('round:answer', ({ matchId, round, answerIndex }) => {
     const match = activeMatches.get(matchId);
     if (!match || match.state !== 'playing') return;
-    
     const roundNum = Number(round);
     if (Number(match.currentRound) !== roundNum) return;
     
     const side = match.playerA.id === socket.user.id ? 'a' : match.playerB.id === socket.user.id ? 'b' : null;
-    if (!side) return;
-    if (match.answers[side][roundNum]) return;
+    if (!side || match.answers[side][roundNum]) return;
     
     match.answers[side][roundNum] = { selected: Number(answerIndex), timeMs: Date.now() - match.roundStartedAt };
-    
     if (match.answers.a[roundNum] && match.answers.b[roundNum] && !match.roundEnding) {
       match.roundEnding = true;
       setTimeout(() => revealRound(match), 200);
@@ -274,8 +292,7 @@ io.on('connection', (socket) => {
     for (const m of activeMatches.values()) {
       if (m.state !== 'playing' && m.state !== 'revealing') continue;
       if (m.playerA.id === socket.user.id || m.playerB.id === socket.user.id) {
-        const winner = m.playerA.id === socket.user.id ? 'b' : 'a';
-        finishMatch(m, winner, 'disconnect');
+        finishMatch(m, m.playerA.id === socket.user.id ? 'b' : 'a', 'disconnect');
       }
     }
   });
@@ -299,7 +316,7 @@ function tryMatch() {
             pool.query('SELECT * FROM students WHERE id=$1', [b.studentId]),
           ]).then(([ra, rb]) => {
             startMatch(a.socketId, ra.rows[0], { socketId: b.socketId, user: rb.rows[0] });
-          });
+          }).catch(() => queue.push(a, b));
         }
         return;
       }
@@ -326,56 +343,54 @@ async function startMatch(socketAId, userA, opponent) {
   if (!opponent) {
     isBot = true;
     let botAccuracy = 0.70, minDelay = 5000, maxDelay = 13000;
+    if (userA.rating < 1000) { botAccuracy = 0.40; minDelay = 8000; maxDelay = 15000; }
+    else if (userA.rating >= 1000 && userA.rating < 1300) { botAccuracy = 0.65; minDelay = 5000; maxDelay = 10000; }
+    else { botAccuracy = 0.85; minDelay = 3000; maxDelay = 6000; }
 
-    if (userA.rating < 1000) {
-      botAccuracy = 0.40; minDelay = 8000; maxDelay = 15000;
-    } else if (userA.rating >= 1000 && userA.rating < 1300) {
-      botAccuracy = 0.65; minDelay = 5000; maxDelay = 10000;
-    } else {
-      botAccuracy = 0.85; minDelay = 3000; maxDelay = 6000;
-    }
-
-    userB = { 
-      id: `bot_${uuid()}`, full_name: 'Komputer', rating: userA.rating,
-      botAccuracy, botMinDelay: minDelay, botMaxDelay: maxDelay
-    };
+    userB = { id: `bot_${uuid()}`, username: 'Komputer', rating: userA.rating, botAccuracy, botMinDelay: minDelay, botMaxDelay: maxDelay };
   } else {
     userB = opponent.user;
     socketB = io.sockets.sockets.get(opponent.socketId);
     if (!socketB) return;
   }
 
-  const bank = (await pool.query('SELECT active_bank_id FROM settings WHERE id=1')).rows[0];
-  const qs = (await pool.query('SELECT * FROM questions WHERE bank_id=$1 ORDER BY RANDOM() LIMIT 5', [bank.active_bank_id])).rows;
-  if (qs.length < 5) {
-    socketA.emit('error', { message: 'Bank soal belum siap' });
-    return;
-  }
+  try {
+    const bank = (await pool.query('SELECT active_bank_id FROM settings WHERE id=1')).rows[0];
+    const qs = (await pool.query('SELECT * FROM questions WHERE bank_id=$1 ORDER BY RANDOM() LIMIT 5', [bank.active_bank_id])).rows;
+    if (qs.length < 5) {
+      socketA.emit('error:msg', { message: 'Bank soal belum siap atau kurang dari 5.' }); return;
+    }
 
-  const matchId = uuid();
-  const match = {
-    id: matchId, bankId: bank.active_bank_id,
-    playerA: { id: userA.id, name: userA.full_name, rating: userA.rating },
-    playerB: { id: userB.id, name: userB.full_name, rating: userB.rating },
-    isBot, botAccuracy: userB.botAccuracy, botMinDelay: userB.botMinDelay, botMaxDelay: userB.botMaxDelay,
-    questions: qs, hp: { a: 100, b: 100 }, currentRound: 1,
-    answers: { a: {}, b: {} }, state: 'starting', roundEnding: false, roundDuration: 60000,
-  };
-  activeMatches.set(matchId, match);
+    const matchId = uuid();
+    const match = {
+      id: matchId, bankId: bank.active_bank_id,
+      // GUNAKAN USERNAME UNTUK LAYAR DUEL
+      playerA: { id: userA.id, name: userA.username, rating: userA.rating },
+      playerB: { id: userB.id, name: userB.username, rating: userB.rating },
+      isBot, botAccuracy: userB.botAccuracy, botMinDelay: userB.botMinDelay, botMaxDelay: userB.botMaxDelay,
+      questions: qs, hp: { a: 100, b: 100 }, currentRound: 1,
+      answers: { a: {}, b: {} }, state: 'starting', roundEnding: false, roundDuration: 90000, // <-- 90 DETIK
+    };
+    activeMatches.set(matchId, match);
 
-  socketA.join(matchId);
-  socketA.emit('match:start', {
-    matchId, you: 'a', playerA: { name: match.playerA.name, rating: match.playerA.rating },
-    playerB: { name: match.playerB.name, rating: match.playerB.rating }, isBot,
-  });
-  if (socketB) {
-    socketB.join(matchId);
-    socketB.emit('match:start', {
-      matchId, you: 'b', playerA: { name: match.playerA.name, rating: match.playerA.rating },
-      playerB: { name: match.playerB.name, rating: match.playerB.rating }, isBot: false,
+    socketA.join(matchId);
+    socketA.emit('match:start', {
+      matchId, you: 'a', playerA: { name: match.playerA.name, rating: match.playerA.rating },
+      playerB: { name: match.playerB.name, rating: match.playerB.rating }, isBot,
     });
+    
+    if (socketB) {
+      socketB.join(matchId);
+      socketB.emit('match:start', {
+        matchId, you: 'b', playerA: { name: match.playerA.name, rating: match.playerA.rating },
+        playerB: { name: match.playerB.name, rating: match.playerB.rating }, isBot: false,
+      });
+    }
+    setTimeout(() => startRound(match), 3000);
+  } catch (err) {
+    socketA.emit('error:msg', { message: 'Koneksi database terputus.' });
+    if (socketB) socketB.emit('error:msg', { message: 'Koneksi database terputus.' });
   }
-  setTimeout(() => startRound(match), 3000);
 }
 
 function startRound(match) {
@@ -389,7 +404,7 @@ function startRound(match) {
 
   io.to(match.id).emit('round:start', {
     round: match.currentRound, totalRounds: 5, code: q.code, options: q.options,
-    duration: 60000, hp: { ...match.hp },
+    duration: 90000, hp: { ...match.hp }, // <-- 90 DETIK
   });
 
   if (match.isBot) {
@@ -406,10 +421,8 @@ function startRound(match) {
         answerIdx = wrongs[Math.floor(Math.random() * wrongs.length)];
       }
       match.answers.b[botRound] = { selected: Number(answerIdx), timeMs: delay };
-      
       if (match.answers.a[botRound] && !match.roundEnding) {
-        match.roundEnding = true;
-        setTimeout(() => revealRound(match), 200);
+        match.roundEnding = true; setTimeout(() => revealRound(match), 200);
       }
     }, delay);
   }
@@ -419,17 +432,13 @@ function startRound(match) {
     if (match.state !== 'playing' || match.roundEnding) return;
     match.roundEnding = true;
     revealRound(match);
-  }, 60000);
+  }, 90000); // <-- 90 DETIK
 }
 
 function revealRound(match) {
   if (match.state !== 'playing') return;
   match.state = 'revealing';
-  
-  if (match.roundTimeout) {
-    clearTimeout(match.roundTimeout);
-    match.roundTimeout = null;
-  }
+  if (match.roundTimeout) { clearTimeout(match.roundTimeout); match.roundTimeout = null; }
 
   const r = Number(match.currentRound);
   const q = match.questions[r - 1];
@@ -440,29 +449,16 @@ function revealRound(match) {
   const correctB = ansB && Number(ansB.selected) === Number(q.correct_index);
 
   let dmgA = 0, dmgB = 0, reason = '';
-  
-  if (!ansA && !ansB) {
-    dmgA = 10; dmgB = 10; reason = 'both_timeout';
-  } 
+  if (!ansA && !ansB) { dmgA = 10; dmgB = 10; reason = 'both_timeout'; } 
   else if (correctA && correctB) {
     if (ansA.timeMs <= ansB.timeMs) { dmgB = 35; dmgA = 15; reason = 'a_faster'; }
     else { dmgA = 35; dmgB = 15; reason = 'b_faster'; }
   } 
-  else if (correctA) {
-    dmgB = 25; reason = !ansB ? 'a_correct_b_timeout' : 'a_correct';
-  } 
-  else if (correctB) {
-    dmgA = 25; reason = !ansA ? 'b_correct_a_timeout' : 'b_correct';
-  } 
-  else if (!ansA) {
-    dmgA = 15; dmgB = 15; reason = 'a_timeout_b_wrong';
-  } 
-  else if (!ansB) {
-    dmgB = 15; dmgA = 15; reason = 'b_timeout_a_wrong';
-  } 
-  else {
-    reason = 'both_wrong';
-  }
+  else if (correctA) { dmgB = 25; reason = !ansB ? 'a_correct_b_timeout' : 'a_correct'; } 
+  else if (correctB) { dmgA = 25; reason = !ansA ? 'b_correct_a_timeout' : 'b_correct'; } 
+  else if (!ansA) { dmgA = 15; dmgB = 15; reason = 'a_timeout_b_wrong'; } 
+  else if (!ansB) { dmgB = 15; dmgA = 15; reason = 'b_timeout_a_wrong'; } 
+  else { reason = 'both_wrong'; }
 
   match.hp.a = Math.max(0, match.hp.a - dmgA);
   match.hp.b = Math.max(0, match.hp.b - dmgB);
@@ -478,26 +474,19 @@ function revealRound(match) {
         [match.id, match.playerA.id, r, q.id, ansA.selected, correctA ? 1 : 0, ansA.timeMs]);
       if (ansB && !match.isBot) await pool.query('INSERT INTO answers (match_id, student_id, round, question_id, selected, is_correct, time_ms) VALUES ($1,$2,$3,$4,$5,$6,$7)',
         [match.id, match.playerB.id, r, q.id, ansB.selected, correctB ? 1 : 0, ansB.timeMs]);
-    } catch (e) { console.error('answer insert error', e); }
+    } catch (e) {}
   })();
 
   setTimeout(() => {
     if (match.state !== 'revealing') return;
     if (match.hp.a <= 0 || match.hp.b <= 0) {
-      finishMatch(match, match.hp.a <= 0 ? 'b' : 'a', 'ko');
-      return;
+      finishMatch(match, match.hp.a <= 0 ? 'b' : 'a', 'ko'); return;
     }
     if (match.currentRound >= 5) {
-      let winner;
-      if (match.hp.a > match.hp.b) winner = 'a';
-      else if (match.hp.b > match.hp.a) winner = 'b';
-      else winner = Math.random() < 0.5 ? 'a' : 'b';
-      finishMatch(match, winner, 'poin');
-      return;
+      let winner = match.hp.a > match.hp.b ? 'a' : match.hp.b > match.hp.a ? 'b' : (Math.random() < 0.5 ? 'a' : 'b');
+      finishMatch(match, winner, 'poin'); return;
     }
-    match.currentRound++;
-    match.state = 'playing';
-    startRound(match);
+    match.currentRound++; match.state = 'playing'; startRound(match);
   }, 5000); 
 }
 
@@ -510,16 +499,9 @@ async function finishMatch(match, winner, reason) {
 
   try {
     const rowA = (await pool.query('SELECT matches_played FROM students WHERE id=$1', [match.playerA.id])).rows[0];
-    
-    let rowB;
-    if (match.isBot) rowB = { matches_played: rowA.matches_played };
-    else rowB = (await pool.query('SELECT matches_played FROM students WHERE id=$1', [match.playerB.id])).rows[0];
+    let rowB = match.isBot ? { matches_played: rowA.matches_played } : (await pool.query('SELECT matches_played FROM students WHERE id=$1', [match.playerB.id])).rows[0];
 
-    const getK = (matches, isBot) => {
-      if (isBot) return 10;
-      return matches < 10 ? 40 : matches < 30 ? 32 : 24;
-    };
-
+    const getK = (matches, isBot) => isBot ? 10 : (matches < 10 ? 40 : matches < 30 ? 32 : 24);
     const kA = getK(rowA.matches_played, match.isBot);
     const kB = getK(rowB.matches_played, match.isBot);
     const EA = 1 / (1 + Math.pow(10, (match.playerB.rating - match.playerA.rating) / 400));
@@ -531,15 +513,12 @@ async function finishMatch(match, winner, reason) {
     ratingB_after += Math.round(kB * (SB - EB));
 
     await pool.query('UPDATE students SET rating=$1, matches_played=matches_played+1 WHERE id=$2', [ratingA_after, match.playerA.id]);
-    if (!match.isBot) {
-      await pool.query('UPDATE students SET rating=$1, matches_played=matches_played+1 WHERE id=$2', [ratingB_after, match.playerB.id]);
-    }
+    if (!match.isBot) await pool.query('UPDATE students SET rating=$1, matches_played=matches_played+1 WHERE id=$2', [ratingB_after, match.playerB.id]);
 
     await pool.query('INSERT INTO matches (id, bank_id, player_a_id, player_b_id, is_bot, hp_a, hp_b, winner, rating_a_before, rating_b_before, rating_a_after, rating_b_after, finished_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)',
       [match.id, match.bankId, match.playerA.id, match.isBot ? null : match.playerB.id, match.isBot ? 1 : 0,
        match.hp.a, match.hp.b, winner, match.playerA.rating, match.playerB.rating, ratingA_after, ratingB_after, Date.now()]);
-       
-  } catch (e) { console.error('finish error', e); }
+  } catch (e) {}
 
   io.to(match.id).emit('match:end', {
     winner, reason, hp: { ...match.hp },
