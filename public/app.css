@@ -97,3 +97,25 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   .options { grid-template-columns: 1fr; }
   .code { font-size: 14px; padding: 12px; }
 }
+
+/* Animasi Loading Spinner */
+.status-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.spinner {
+  width: 20px;
+  height: 20px;
+  border: 3px solid rgba(255, 255, 255, 0.2);
+  border-radius: 50%;
+  border-top-color: #3b82f6; /* Warna biru */
+  animation: spin 1s ease-in-out infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}

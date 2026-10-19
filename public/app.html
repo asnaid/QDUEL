@@ -21,7 +21,10 @@
       </div>
     </div>
     <div class="card center">
-      <div id="status" class="status">Siap menerima tantangan</div>
+            <div class="status-wrap">
+        <div id="spinner" class="spinner hidden"></div>
+        <div id="status" class="status" style="margin-bottom: 0;">Siap menerima tantangan</div>
+      </div>
       <button id="btn-search" class="btn-primary" onclick="search()">Mulai Duel</button>
       <button id="btn-bot" class="btn-secondary hidden" onclick="acceptBot()">Latihan vs Komputer</button>
       <button id="btn-cancel" class="btn-secondary hidden" onclick="cancel()">Batal</button>
@@ -149,24 +152,28 @@ async function init() {
   
   socket.on('queue:waiting', () => document.getElementById('status').textContent = 'Mencari lawan...');
 
-  socket.on('error:msg', (data) => {
+    socket.on('error:msg', (data) => {
     alert(data.message);
+    document.getElementById('spinner').classList.add('hidden'); // Sembunyikan spinner
     document.getElementById('btn-search').classList.remove('hidden');
     document.getElementById('btn-cancel').classList.add('hidden');
     document.getElementById('status').textContent = 'Siap menerima tantangan';
   });
   
-  socket.on('queue:offer-bot', () => {
+    socket.on('queue:offer-bot', () => {
     if (matchInfo) return;
+    document.getElementById('spinner').classList.add('hidden'); // Sembunyikan spinner
     const btn = document.getElementById('btn-bot');
     if (!btn.classList.contains('hidden')) return;
     btn.classList.remove('hidden');
     document.getElementById('status').textContent = 'Belum ada lawan. Coba latihan vs komputer?';
   });
 
-  socket.on('match:start', data => {
+    socket.on('match:start', data => {
+    document.getElementById('spinner').classList.add('hidden'); // Sembunyikan spinner
     matchInfo = data;
     isPlayerB = data.you === 'b';
+    // ... (sisa kode match:start biarkan sama)
     document.getElementById('lobby-screen').classList.add('hidden');
     document.getElementById('battle-screen').classList.remove('hidden');
     
@@ -260,6 +267,7 @@ function search() {
   document.getElementById('btn-cancel').classList.remove('hidden');
   document.getElementById('btn-bot').classList.add('hidden');
   document.getElementById('status').textContent = 'Mencari lawan...';
+  document.getElementById('spinner').classList.remove('hidden'); // Munculkan spinner
 }
 
 function cancel() {
@@ -268,6 +276,7 @@ function cancel() {
   document.getElementById('btn-cancel').classList.add('hidden');
   document.getElementById('btn-bot').classList.add('hidden');
   document.getElementById('status').textContent = 'Siap menerima tantangan';
+  document.getElementById('spinner').classList.add('hidden'); // Sembunyikan spinner
 }
 
 function acceptBot() { socket.emit('queue:accept-bot'); }
