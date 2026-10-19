@@ -182,17 +182,39 @@ app.get('/api/history', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Server error' }); }
 });
 
-// --- RUTE ADMIN ---
+// --- RUTE ADMIN (GURU) ---
 app.get('/api/admin/stats', async (req, res) => {
   try {
     const totalStudents = await pool.query('SELECT COUNT(*) FROM students WHERE is_teacher = FALSE');
     const totalMatches = await pool.query('SELECT COUNT(*) FROM matches');
     const activeBank = await pool.query('SELECT s.active_bank_id, qb.name FROM settings s JOIN question_banks qb ON s.active_bank_id = qb.id WHERE s.id = 1');
+    const recent = await pool.query(`
+      SELECT m.id, m.is_bot, m.finished_at, m.winner, 
+             m.player_a_id, m.player_b_id, pA.username as name_a, pB.username as name_b 
+      FROM matches m
+      LEFT JOIN students pA ON m.player_a_id = pA.id
+      LEFT JOIN students pB ON m.player_b_id = pB.id
+      ORDER BY m.finished_at DESC LIMIT 5
+    `);
     res.json({
       students: Number(totalStudents.rows[0].count),
       matches: Number(totalMatches.rows[0].count),
-      activeBank: activeBank.rows[0] || { active_bank_id: 1, name: 'Belum disetel' }
+      activeBank: activeBank.rows[0] || { active_bank_id: 1, name: 'Belum disetel' },
+      recentMatches: recent.rows
     });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/admin/banks', async (req, res) => {
+  try {
+    const q = `
+      SELECT qb.id, qb.name, COUNT(q.id) as total_questions 
+      FROM question_banks qb 
+      LEFT JOIN questions q ON qb.id = q.bank_id 
+      GROUP BY qb.id, qb.name ORDER BY qb.id ASC
+    `;
+    const result = await pool.query(q);
+    res.json(result.rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -201,11 +223,125 @@ app.get('/api/admin/students', async (req, res) => {
     const q = `
       SELECT s.id, s.full_name, s.username, s.class_code, s.rating, s.matches_played,
         (SELECT COUNT(*) FROM answers a WHERE a.student_id = s.id AND a.is_correct = 1) as correct,
-        (SELECT COUNT(*) FROM answers a WHERE a.student_id = s.id) as total_answered
+        (SELECT COUNT(*) FROM answers a WHERE a.student_id = s.id) as total_answered,
+        (SELECT COUNT(*) FROM matches m WHERE (m.winner = 'a' AND m.player_a_id = s.id) OR (m.winner = 'b' AND m.player_b_id = s.id)) as wins
       FROM students s WHERE s.is_teacher = FALSE ORDER BY s.rating DESC
     `;
     const result = await pool.query(q);
     res.json(result.rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// CRUD SISWA
+app.post('/api/admin/students', async (req, res) => {
+  const { username, password, full_name, class_code } = req.body;
+  if (!username || !password || !full_name) return res.status(400).json({ error: 'Data kurang' });
+  if (/\s/.test(username)) return res.status(400).json({ error: 'Username tanpa spasi' });
+  
+  try {
+    const exists = await pool.query('SELECT id FROM students WHERE username=$1', [username]);
+    if (exists.rows.length) return res.status(400).json({ error: 'Username sudah dipakai' });
+    
+    const id = uuid();
+    const hash = bcrypt.hashSync(password, 10);
+    await pool.query('INSERT INTO students (id, username, password_hash, full_name, class_code, created_at, is_teacher) VALUES ($1,$2,$3,$4,$5,$6,FALSE)',
+      [id, username, hash, full_name, class_code || '', Date.now()]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.put('/api/admin/students/:id', async (req, res) => {
+  const { id } = req.params;
+  const { username, full_name, class_code } = req.body;
+  if (!username || !full_name) return res.status(400).json({ error: 'Data kurang' });
+  if (/\s/.test(username)) return res.status(400).json({ error: 'Username tanpa spasi' });
+
+  try {
+    const exists = await pool.query('SELECT id FROM students WHERE username=$1 AND id != $2', [username, id]);
+    if (exists.rows.length) return res.status(400).json({ error: 'Username sudah dipakai siswa lain' });
+
+    await pool.query('UPDATE students SET username=$1, full_name=$2, class_code=$3 WHERE id=$4', 
+      [username, full_name, class_code || '', id]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/admin/students/:id', async (req, res) => {
+  const { id } = req.params;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    // Hapus data terkait dulu agar tidak melanggar Foreign Key
+    await client.query('DELETE FROM answers WHERE student_id=$1', [id]);
+    await client.query('DELETE FROM matches WHERE player_a_id=$1 OR player_b_id=$1', [id]);
+    await client.query('DELETE FROM students WHERE id=$1', [id]);
+    await client.query('COMMIT');
+    res.json({ ok: true });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: e.message });
+  } finally {
+    client.release();
+  }
+});
+
+app.post('/api/admin/students/:id/reset-password', async (req, res) => {
+  const { id } = req.params;
+  const { newPassword } = req.body;
+  if (!newPassword || newPassword.length < 4) return res.status(400).json({ error: 'Password minimal 4 karakter' });
+
+  try {
+    const hash = bcrypt.hashSync(newPassword, 10);
+    await pool.query('UPDATE students SET password_hash=$1 WHERE id=$2', [hash, id]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/admin/students/:id/detail', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const student = await pool.query('SELECT full_name, username, class_code, rating, matches_played FROM students WHERE id=$1', [id]);
+    if (student.rows.length === 0) return res.status(404).json({ error: 'Siswa tidak ditemukan' });
+    
+    const matches = await pool.query(`
+      SELECT m.finished_at, m.winner, m.hp_a, m.hp_b, m.is_bot, pA.username as name_a, pB.username as name_b, m.player_a_id
+      FROM matches m
+      LEFT JOIN students pA ON m.player_a_id = pA.id
+      LEFT JOIN students pB ON m.player_b_id = pB.id
+      WHERE m.player_a_id = $1 OR m.player_b_id = $1
+      ORDER BY m.finished_at DESC LIMIT 10
+    `, [id]);
+
+    res.json({ info: student.rows[0], matches: matches.rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ANALITIK SOAL
+app.get('/api/admin/questions/stats', async (req, res) => {
+  try {
+    const q = `
+      SELECT q.id, q.code, q.bank_id,
+        COUNT(a.id) as total_attempts,
+        SUM(CASE WHEN a.is_correct = 1 THEN 1 ELSE 0 END) as correct_attempts
+      FROM questions q
+      JOIN answers a ON q.id = a.question_id
+      WHERE q.bank_id = (SELECT active_bank_id FROM settings WHERE id=1)
+      GROUP BY q.id, q.code, q.bank_id
+      HAVING COUNT(a.id) >= 3
+    `;
+    const result = await pool.query(q);
+    
+    const processed = result.rows.map(r => {
+      const total = Number(r.total_attempts);
+      const correct = Number(r.correct_attempts);
+      const accuracy = Math.round((correct / total) * 100);
+      return { ...r, total, correct, accuracy };
+    });
+
+    const hardest = [...processed].sort((a, b) => a.accuracy - b.accuracy).slice(0, 5);
+    const easiest = [...processed].sort((a, b) => b.accuracy - a.accuracy).slice(0, 5);
+
+    res.json({ hardest, easiest });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
