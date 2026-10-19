@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Quiz Duel</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+
+<div id="lobby-screen">
+  <div class="container">
+    <div class="header">
+      <div>
+        <div class="name" id="name">...</div>
+        <div class="rating">Poin: <b id="rating">-</b></div>
+      </div>
+      <button class="btn-logout" onclick="logout()">Keluar</button>
+    </div>
+    <div class="card center">
+      <div id="status" class="status">Siap menerima tantangan</div>
+      <button id="btn-search" class="btn-primary" onclick="search()">Mulai Duel</button>
+      <button id="btn-bot" class="btn-secondary hidden" onclick="acceptBot()">Latihan vs Komputer</button>
+      <button id="btn-cancel" class="btn-secondary hidden" onclick="cancel()">Batal</button>
+      <button class="btn-secondary" onclick="openLeaderboard()" style="margin-top: 20px;">🏆 Papan Juara</button>
+    </div>
+    
+    <!-- RIWAYAT DUEL -->
+    <div class="card" id="history-card" style="display: none;">
+      <h2>5 Duel Terakhir</h2>
+      <div id="history-list" style="font-size: 14px;"></div>
+    </div>
+  </div>
+</div>
+
+<div id="battle-screen" class="hidden">
+  <div class="battle-container">
+    <div class="hp-row">
+      <div class="hp-player">
+        <div class="hp-name" id="name-a">A</div>
+        <div class="hp-bar"><div class="hp-fill" id="hp-a"></div></div>
+        <div class="hp-num"><span id="hp-a-num">100</span></div>
+      </div>
+      <div class="round-info"><div id="round">Bersiap...</div></div>
+      <div class="hp-player right">
+        <div class="hp-name" id="name-b">B</div>
+        <div class="hp-bar"><div class="hp-fill" id="hp-b"></div></div>
+        <div class="hp-num"><span id="hp-b-num">100</span></div>
+      </div>
+    </div>
+    <div class="timer-bar"><div class="timer-fill" id="timer-fill"></div></div>
+    <div class="question-area">
+      <pre class="code"><code id="code">...</code></pre>
+      <div class="options" id="options"></div>
+    </div>
+    <div id="reveal" class="reveal hidden">
+      <div class="reveal-content">
+        <div id="reveal-title" class="reveal-title"></div>
+        <div id="reveal-explanation" class="reveal-explanation"></div>
+        <div id="reveal-damage" class="reveal-damage"></div>
+      </div>
+    </div>
+    <div id="end" class="end hidden">
+      <div class="end-content">
+        <div id="end-title" class="end-title"></div>
+        <div id="end-details" class="end-details"></div>
+        <button class="btn-primary" onclick="location.reload()">Kembali ke Lobby</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="leaderboard-modal" class="end hidden">
+  <div class="end-content">
+    <h2 style="color: #fbbf24; margin-bottom: 16px;">🏆 Papan Juara</h2>
+    <div id="leaderboard-list" style="text-align: left; margin-bottom: 20px; font-size: 15px;"></div>
+    <div id="my-rank-info" style="padding: 12px; background: #0f172a; border-radius: 8px; margin-bottom: 20px; font-weight: bold; color: #60a5fa;"></div>
+    <button class="btn-primary" onclick="closeLeaderboard()">Tutup</button>
+  </div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+let socket, matchInfo = null, currentRound = 0, answered = false, timerInterval;
+let isPlayerB = false;
+
+async function init() {
+  const r = await fetch('/api/me');
+  if (!r.ok) return location.href = '/';
+  const me = await r.json();
+  document.getElementById('name').textContent = me.full_name;
+  document.getElementById('rating').textContent = me.rating;
+
+  socket = io();
+  
+  socket.on('force_logout', async () => {
+    await fetch('/api/logout', { method: 'POST' });
+    alert('Akunmu baru saja login di perangkat lain. Sesi ini telah dihentikan.');
+    location.href = '/';
+  });
+
+  socket.on('disconnect', async (reason) => {
+    if (reason === 'io server disconnect') {
+      await fetch('/api/logout', { method: 'POST' });
+      alert('Sesi kamu berakhir karena login di perangkat lain.');
+      location.href = '/';
+    }
+  });
+
+  socket.on('connect_error', async (err) => {
+    if (err.message.includes('Sesi berakhir')) {
+      await fetch('/api/logout', { method: 'POST' });
+      alert('Sesi kamu berakhir karena login di perangkat lain.');
+      location.href = '/';
+    }
+  });
+  
+  socket.on('queue:waiting', () => document.getElementById('status').textContent = 'Mencari lawan...');
+
+  socket.on('error:msg', (data) => {
+    alert(data.message);
+    document.getElementById('btn-search').classList.remove('hidden');
+    document.getElementById('btn-cancel').classList.add('hidden');
+    document.getElementById('status').textContent = 'Siap menerima tantangan';
+  });
+  
+  socket.on('queue:offer-bot', () => {
+    if (matchInfo) return;
+    const btn = document.getElementById('btn-bot');
+    if (!btn.classList.contains('hidden')) return;
+    btn.classList.remove('hidden');
+    document.getElementById('status').textContent = 'Belum ada lawan. Coba latihan vs komputer?';
+  });
+
+  socket.on('match:start', data => {
+    matchInfo = data;
+    isPlayerB = data.you === 'b';
+    document.getElementById('lobby-screen').classList.add('hidden');
+    document.getElementById('battle-screen').classList.remove('hidden');
+    
+    const myName = isPlayerB ? data.playerB.name : data.playerA.name;
+    const oppName = isPlayerB ? data.playerA.name : data.playerB.name;
+    const oppIsBot = isPlayerB ? false : data.isBot;
+
+    document.getElementById('name-a').textContent = myName + ' (Kamu)';
+    document.getElementById('name-b').textContent = oppName + (oppIsBot ? ' (Komputer)' : '');
+  });
+
+  socket.on('round:start', onRoundStart);
+  socket.on('round:reveal', onReveal);
+  socket.on('match:end', onEnd);
+
+  loadHistory();
+}
+
+function updateHpBar(hp, elementId) {
+  const el = document.getElementById(elementId);
+  el.style.width = hp + '%';
+  if (hp > 50) el.style.backgroundColor = '#4ade80'; // Hijau
+  else if (hp > 25) el.style.backgroundColor = '#fbbf24'; // Kuning
+  else el.style.backgroundColor = '#f87171'; // Merah
+}
+
+function search() {
+  socket.emit('queue:join');
+  document.getElementById('btn-search').classList.add('hidden');
+  document.getElementById('btn-cancel').classList.remove('hidden');
+  document.getElementById('btn-bot').classList.add('hidden');
+  document.getElementById('status').textContent = 'Mencari lawan...';
+}
+
+function cancel() {
+  socket.emit('queue:leave');
+  document.getElementById('btn-search').classList.remove('hidden');
+  document.getElementById('btn-cancel').classList.add('hidden');
+  document.getElementById('btn-bot').classList.add('hidden');
+  document.getElementById('status').textContent = 'Siap menerima tantangan';
+}
+
+function acceptBot() { socket.emit('queue:accept-bot'); }
+
+function onRoundStart(data) {
+  answered = false;
+  currentRound = Number(data.round);
+  document.getElementById('round').textContent = `Ronde ${data.round}/${data.totalRounds}`;
+  document.getElementById('code').textContent = data.code;
+  
+  const myHp = isPlayerB ? data.hp.b : data.hp.a;
+  const oppHp = isPlayerB ? data.hp.a : data.hp.b;
+  
+  document.getElementById('hp-a-num').textContent = myHp;
+  document.getElementById('hp-b-num').textContent = oppHp;
+  updateHpBar(myHp, 'hp-a');
+  updateHpBar(oppHp, 'hp-b');
+
+  const opts = document.getElementById('options');
+  opts.innerHTML = '';
+  data.options.forEach((o, i) => {
+    const b = document.createElement('button');
+    b.className = 'option';
+    b.textContent = o;
+    b.onclick = () => submitAnswer(i, b);
+    opts.appendChild(b);
+  });
+
+  document.getElementById('reveal').classList.add('hidden');
+  clearInterval(timerInterval);
+  
+  const totalSeconds = 20; 
+  let timeLeft = totalSeconds;
+  document.getElementById('timer-fill').style.width = '100%';
+  
+  timerInterval = setInterval(() => {
+    timeLeft -= 0.1;
+    if (timeLeft <= 0) { 
+      clearInterval(timerInterval); 
+      document.getElementById('timer-fill').style.width = '0%'; 
+      if (!answered) document.getElementById('round').textContent = 'Waktu habis...'; 
+      return; 
+    }
+    document.getElementById('timer-fill').style.width = (timeLeft / totalSeconds * 100) + '%';
+  }, 100);
+}
+
+function submitAnswer(idx, btn) {
+  if (answered) return;
+  answered = true;
+  clearInterval(timerInterval); 
+  document.querySelectorAll('.option').forEach(b => b.disabled = true);
+  btn.classList.add('selected');
+  document.getElementById('round').textContent = 'Menunggu lawan...';
+  
+  if (navigator.vibrate) navigator.vibrate(40);
+
+  socket.emit('round:answer', { 
+    matchId: matchInfo.matchId, round: Number(currentRound), answerIndex: Number(idx) 
+  });
+}
+
+function onReveal(data) {
+  clearInterval(timerInterval);
+  document.getElementById('timer-fill').style.width = '0%';
+  
+  const myHp = isPlayerB ? data.hp.b : data.hp.a;
+  const oppHp = isPlayerB ? data.hp.a : data.hp.b;
+  
+  document.getElementById('hp-a-num').textContent = myHp;
+  document.getElementById('hp-b-num').textContent = oppHp;
+  updateHpBar(myHp, 'hp-a');
+  updateHpBar(oppHp, 'hp-b');
+
+  let title = '';
+  const mySide = isPlayerB ? 'b' : 'a';
+  
+  if (data.reason === 'both_timeout') title = 'Waktu Habis untuk Keduanya ⏰';
+  else if (data.reason === 'both_wrong') title = 'Keduanya Salah ❌';
+  else if (data.reason === 'a_faster' || data.reason === 'b_faster') {
+    const fasterSide = data.reason.startsWith('a') ? 'a' : 'b';
+    title = (fasterSide === mySide) ? 'Kamu Lebih Cepat! ⚡' : 'Lawan Lebih Cepat';
+  }
+  else if (data.reason.includes('_correct')) {
+    if (data.reason.startsWith(mySide)) title = 'Jawabanmu Benar! ✅';
+    else title = 'Lawan Benar ❌';
+  }
+  else if (data.reason.includes('_timeout')) {
+    if (data.reason.startsWith(mySide)) title = 'Kamu Kehabisan Waktu ⏰';
+    else title = 'Lawan Kehabisan Waktu';
+  }
+
+  if (navigator.vibrate) {
+    if (data.reason.includes(mySide + '_correct') || data.reason.includes(mySide + '_faster')) {
+      navigator.vibrate(100);
+    } else {
+      navigator.vibrate([100, 50, 100]);
+    }
+  }
+
+  document.getElementById('reveal-title').textContent = title;
+  document.getElementById('reveal-explanation').textContent = data.explanation || '';
+  
+  const myDmg = isPlayerB ? data.damage.b : data.damage.a;
+  const oppDmg = isPlayerB ? data.damage.a : data.damage.b;
+  
+  let d = '';
+  if (myDmg > 0) d += `Kamu -${myDmg} HP  `;
+  if (oppDmg > 0) d += `Lawan -${oppDmg} HP`;
+  document.getElementById('reveal-damage').textContent = d || 'Tidak ada damage';
+  
+  document.getElementById('reveal').classList.remove('hidden');
+}
+
+function onEnd(data) {
+  clearInterval(timerInterval);
+  document.getElementById('reveal').classList.add('hidden'); 
+  
+  const iWon = data.winner === matchInfo.you;
+  let title = iWon ? '🎉 MENANG!' : 'Belum Beruntung';
+  
+  if (data.reason === 'disconnect') {
+    title = iWon ? '🎉 MENANG! (Lawan Keluar)' : 'Kalah (Kamu Keluar)';
+  }
+  
+  document.getElementById('end-title').textContent = title;
+  document.getElementById('end-title').className = 'end-title ' + (iWon ? 'win' : 'lose');
+  
+  const myRating = isPlayerB ? data.rating.b : data.rating.a;
+  const myHpEnd = isPlayerB ? data.hp.b : data.hp.a;
+  const oppHpEnd = isPlayerB ? data.hp.a : data.hp.b;
+  
+  let d = `HP akhir: ${myHpEnd} vs ${oppHpEnd}<br>`;
+  d += `Poin: ${myRating.before} → ${myRating.after} (${myRating.change >= 0 ? '+' : ''}${myRating.change})`;
+  
+  if (data.reason === 'disconnect') {
+    d += `<br><br><span style="color:#4ade80; font-size: 14px;">Pertandingan berakhir karena ada pemain yang terputus.</span>`;
+  }
+
+  document.getElementById('end-details').innerHTML = d;
+  document.getElementById('end').classList.remove('hidden');
+}
+
+async function openLeaderboard() {
+  try {
+    const r = await fetch('/api/leaderboard');
+    if (!r.ok) {
+      const errData = await r.json();
+      return alert('Gagal memuat peringkat: ' + (errData.error || r.statusText));
+    }
+    const data = await r.json();
+    
+    const list = document.getElementById('leaderboard-list');
+    list.innerHTML = '';
+    
+    data.top10.forEach((user, i) => {
+      const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
+      list.innerHTML += `
+        <div style="display:flex; justify-content:space-between; padding: 6px 0; border-bottom: 1px solid #334155;">
+          <span>${medal} ${user.full_name}</span>
+          <span style="color:#60a5fa; font-weight:bold;">${user.rating}</span>
+        </div>
+      `;
+    });
+
+    document.getElementById('my-rank-info').innerHTML = `
+      Posisi Kamu: Peringkat ${data.myRank} <br> Poin: ${data.myRating}
+    `;
+    
+    document.getElementById('leaderboard-modal').classList.remove('hidden');
+  } catch (err) {
+    alert('Terjadi kesalahan jaringan: ' + err.message);
+  }
+}
+
+function closeLeaderboard() {
+  document.getElementById('leaderboard-modal').classList.add('hidden');
+}
+
+async function loadHistory() {
+  try {
+    const r = await fetch('/api/history');
+    if (!r.ok) return;
+    const data = await r.json();
+    
+    if (data.length === 0) return;
+    
+    const list = document.getElementById('history-list');
+    list.innerHTML = '';
+    
+    data.forEach(match => {
+      const color = match.iWon ? '#4ade80' : '#f87171';
+      const resultText = match.iWon ? 'Menang' : 'Kalah';
+      const ratingColor = match.ratingChange > 0 ? '#4ade80' : (match.ratingChange < 0 ? '#f87171' : '#94a3b8');
+      const ratingStr = match.ratingChange > 0 ? `+${match.ratingChange}` : match.ratingChange;
+      const botText = match.isBot ? ' (Komputer)' : '';
+
+      list.innerHTML += `
+        <div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #334155;">
+          <div>
+            <span style="color: ${color}; font-weight: bold;">${resultText}</span> 
+            <span style="color: #cbd5e1;">vs ${match.opponent}${botText}</span>
+          </div>
+          <div style="text-align: right;">
+            <span style="color: #94a3b8; font-size: 12px;">${match.myHp} - ${match.oppHp}</span>
+            <span style="color: ${ratingColor}; font-weight: bold; margin-left: 8px;">${ratingStr}</span>
+          </div>
+        </div>
+      `;
+    });
+    
+    document.getElementById('history-card').style.display = 'block';
+  } catch (e) {
+    console.log('Gagal memuat riwayat');
+  }
+}
+
+async function logout() {
+  await fetch('/api/logout', { method: 'POST' });
+  location.href = '/';
+}
+
+init();
+</script>
+</body>
+</html>

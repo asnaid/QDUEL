@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Quiz Duel</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<div class="container">
+  <h1>Quiz Duel</h1>
+  <div class="card">
+    <h2>Masuk</h2>
+    <input id="lu" placeholder="Username" autocomplete="username">
+    <input id="lp" type="password" placeholder="Password" autocomplete="current-password">
+    <button class="btn-primary" onclick="doLogin()">Masuk</button>
+  </div>
+  <div class="card">
+    <h2>Daftar</h2>
+    <input id="ru" placeholder="Username (unik)">
+    <input id="rp" type="password" placeholder="Password">
+    <input id="rn" placeholder="Nama lengkap">
+    <input id="rc" placeholder="Kelas (opsional)">
+    <button class="btn-primary" onclick="doRegister()">Daftar</button>
+  </div>
+  <div id="msg" class="msg"></div>
+</div>
+<script>
+const msg = document.getElementById('msg');
+function show(t, e) { msg.textContent = t; msg.className = 'msg ' + (e ? 'error' : 'success'); }
+async function doLogin() {
+  const r = await fetch('/api/login', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ username: lu.value, password: lp.value }) });
+  if (r.ok) location.href = '/lobby';
+  else show((await r.json()).error, true);
+}
+async function doRegister() {
+  const r = await fetch('/api/register', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ username: ru.value, password: rp.value, fullName: rn.value, classCode: rc.value }) });
+  if (r.ok) location.href = '/lobby';
+  else show((await r.json()).error, true);
+}
+fetch('/api/me').then(r => { if (r.ok) location.href = '/lobby'; });
+</script>
+</body>
+</html>
