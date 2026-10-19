@@ -359,7 +359,7 @@ async function startMatch(socketAId, userA, opponent) {
     playerB: { id: userB.id, name: userB.full_name, rating: userB.rating },
     isBot, botAccuracy: userB.botAccuracy, botMinDelay: userB.botMinDelay, botMaxDelay: userB.botMaxDelay,
     questions: qs, hp: { a: 100, b: 100 }, currentRound: 1,
-    answers: { a: {}, b: {} }, state: 'starting', roundEnding: false, roundDuration: 20000,
+    answers: { a: {}, b: {} }, state: 'starting', roundEnding: false, roundDuration: 60000,
   };
   activeMatches.set(matchId, match);
 
@@ -389,7 +389,7 @@ function startRound(match) {
 
   io.to(match.id).emit('round:start', {
     round: match.currentRound, totalRounds: 5, code: q.code, options: q.options,
-    duration: 20000, hp: { ...match.hp },
+    duration: 60000, hp: { ...match.hp },
   });
 
   if (match.isBot) {
@@ -419,7 +419,7 @@ function startRound(match) {
     if (match.state !== 'playing' || match.roundEnding) return;
     match.roundEnding = true;
     revealRound(match);
-  }, 20000);
+  }, 60000);
 }
 
 function revealRound(match) {
