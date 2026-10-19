@@ -3,39 +3,61 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
-<title>Quiz Duel</title>
+<title>Pendaftaran - Akademi Logika C++</title>
 <link rel="stylesheet" href="/app.css">
+<style>
+  .academy-header { text-align: center; margin-bottom: 24px; }
+  .academy-header h1 { color: #60a5fa; font-size: 26px; margin-bottom: 8px; }
+  .academy-header p { color: #94a3b8; font-size: 14px; }
+  .section-title { font-size: 16px; font-weight: bold; margin-bottom: 16px; color: #e2e8f0; border-bottom: 1px solid #334155; padding-bottom: 8px; }
+</style>
 </head>
 <body>
-<div class="container">
-  <h1>Quiz Duel</h1>
-  <div class="card">
-    <h2>Masuk</h2>
-    <input id="lu" placeholder="Username" autocomplete="username">
-    <input id="lp" type="password" placeholder="Password" autocomplete="current-password">
-    <button class="btn-primary" onclick="doLogin()">Masuk</button>
-  </div>
+<div class="container" style="padding-top: 30px; padding-bottom: 30px;">
   
+  <div class="academy-header">
+    <h1>🏫 Akademi Logika C++</h1>
+    <p>Uji Kemampuan Pemrogramanmu di Arena Duel</p>
+  </div>
+
+  <!-- FORM PENDAFTARAN SISWA BARU -->
   <div class="card">
-    <h2>Daftar Akun Baru</h2>
-    <label style="font-size: 13px; color: #94a3b8; display: block; margin-bottom: 4px;">Nama Lengkap</label>
+    <div class="section-title">📝 Pendaftaran Siswa Baru</div>
+    
+    <label style="font-size: 12px; color: #94a3b8; display: block; margin-bottom: 4px;">Nama Lengkap</label>
     <input id="rn" placeholder="Ketik nama asli kamu">
     <div style="font-size: 11px; color: #f87171; margin-top: -6px; margin-bottom: 12px; padding-left: 4px;">
       *Hanya dapat dilihat oleh Guru dan Dirimu Sendiri.
     </div>
-    <label style="font-size: 13px; color: #94a3b8; display: block; margin-bottom: 4px;">Kelas (Opsional)</label>
+    
+    <label style="font-size: 12px; color: #94a3b8; display: block; margin-bottom: 4px;">Kelas</label>
     <input id="rc" placeholder="Contoh: XI-IPA-1" style="margin-bottom: 12px;">
-    <label style="font-size: 13px; color: #94a3b8; display: block; margin-bottom: 4px;">Username (Nama Samaran)</label>
-    <input id="ru" placeholder="Ketik username unik">
+    
+    <label style="font-size: 12px; color: #94a3b8; display: block; margin-bottom: 4px;">Username (Nama Samaran)</label>
+    <input id="ru" placeholder="Buat username unik">
     <div id="username-status" style="font-size: 11px; margin-top: -6px; margin-bottom: 12px; padding-left: 4px;">
-      <span style="color: #fbbf24;">*Nama ini yang akan tampil di Papan Juara dan Duel.</span>
+      <span style="color: #fbbf24;">*Nama ini yang akan tampil di Papan Juara dan saat Duel.</span>
     </div>
-    <label style="font-size: 13px; color: #94a3b8; display: block; margin-bottom: 4px;">Password</label>
+    
+    <label style="font-size: 12px; color: #94a3b8; display: block; margin-bottom: 4px;">Password</label>
     <input id="rp" type="password" placeholder="Ketik password">
-    <button class="btn-primary" onclick="doRegister()" style="margin-top: 12px;">Daftar</button>
+    
+    <button class="btn-primary" onclick="doRegister()" style="margin-top: 16px;">Daftar & Masuk ke Akademi</button>
   </div>
+
+  <!-- FORM LOGIN SISWA LAMA -->
+  <div class="card" style="margin-top: 16px;">
+    <div class="section-title">🔑 Login Siswa Lama</div>
+    <label style="font-size: 12px; color: #94a3b8; display: block; margin-bottom: 4px;">Username</label>
+    <input id="lu" placeholder="Username" autocomplete="username">
+    <label style="font-size: 12px; color: #94a3b8; display: block; margin-bottom: 4px;">Password</label>
+    <input id="lp" type="password" placeholder="Password" autocomplete="current-password">
+    <button class="btn-secondary" onclick="doLogin()" style="margin-top: 8px;">Masuk</button>
+  </div>
+
   <div id="msg" class="msg"></div>
 </div>
+
 <script>
 const msg = document.getElementById('msg');
 function show(t, e) { msg.textContent = t; msg.className = 'msg ' + (e ? 'error' : 'success'); }
@@ -51,6 +73,7 @@ async function doLogin() {
 }
 
 async function doRegister() {
+  if (!rn.value || !ru.value || !rp.value) return show('Lengkapi Nama, Username, dan Password!', true);
   const r = await fetch('/api/register', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ username: ru.value, password: rp.value, fullName: rn.value, classCode: rc.value }) });
   if (r.ok) location.href = '/lobby';
   else show((await r.json()).error, true);
@@ -61,7 +84,7 @@ document.getElementById('ru').addEventListener('blur', async (e) => {
   const statusEl = document.getElementById('username-status');
   
   if (!val) { 
-    statusEl.innerHTML = '<span style="color: #fbbf24;">*Nama ini yang akan tampil di Papan Juara dan Duel.</span>'; 
+    statusEl.innerHTML = '<span style="color: #fbbf24;">*Nama ini yang akan tampil di Papan Juara dan saat Duel.</span>'; 
     return; 
   }
   
@@ -75,15 +98,9 @@ document.getElementById('ru').addEventListener('blur', async (e) => {
   try {
     const r = await fetch('/api/check-username?username=' + encodeURIComponent(val));
     const data = await r.json();
-    
-    if (data.available) {
-      statusEl.innerHTML = '<span style="color: #4ade80;">✅ Username tersedia! (Akan tampil di game)</span>';
-    } else {
-      statusEl.innerHTML = '<span style="color: #f87171;">❌ Username sudah dipakai</span>';
-    }
-  } catch (err) {
-    statusEl.innerHTML = '';
-  }
+    if (data.available) statusEl.innerHTML = '<span style="color: #4ade80;">✅ Username tersedia! (Akan tampil di game)</span>';
+    else statusEl.innerHTML = '<span style="color: #f87171;">❌ Username sudah dipakai</span>';
+  } catch (err) { statusEl.innerHTML = ''; }
 });
 
 fetch('/api/me').then(r => { if (r.ok) location.href = '/lobby'; });

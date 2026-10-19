@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
-<title>Dashboard Guru - Quiz Duel</title>
+<title>Dashboard Guru - Akademi Logika C++</title>
 <link rel="stylesheet" href="/app.css">
 <style>
   .admin-container { max-width: 1000px; margin: 0 auto; padding: 20px; }
@@ -42,7 +42,7 @@
 
 <div class="admin-container">
   <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-    <h1 style="font-size: 20px;">👨‍🏫 Dashboard Guru</h1>
+    <h1 style="font-size: 20px;">👨‍🏫 Dashboard Guru - Akademi Logika C++</h1>
     <button class="btn-logout" onclick="logout()">Logout</button>
   </div>
 
@@ -53,7 +53,6 @@
     <div class="tab" onclick="switchTab('analitik', this)">Analitik Soal</div>
   </div>
 
-  <!-- PANEL 1: RINGKASAN -->
   <div id="panel-ringkasan" class="panel active">
     <div class="stats-grid">
       <div class="stat-card"><h3>Total Siswa</h3><div class="value" id="stat-students">-</div></div>
@@ -66,7 +65,6 @@
     </div>
   </div>
 
-  <!-- PANEL 2: DATA SISWA -->
   <div id="panel-siswa" class="panel">
     <div class="filter-box">
       <input type="text" id="search-student" placeholder="Cari Nama atau Username..." onkeyup="renderStudents()">
@@ -89,13 +87,11 @@
     </div>
   </div>
 
-  <!-- PANEL 3: BANK SOAL -->
   <div id="panel-bank" class="panel">
     <p style="font-size: 13px; color: #94a3b8; margin-bottom: 15px;">Klik "Aktifkan" untuk mengganti bank soal yang akan digunakan di duel.</p>
     <div class="bank-grid" id="bank-list"></div>
   </div>
 
-  <!-- PANEL 4: ANALITIK SOAL -->
   <div id="panel-analitik" class="panel">
     <p style="font-size: 13px; color: #94a3b8; margin-bottom: 15px;">Statistik seluruh soal dari semua bank. Data diurutkan dari soal yang paling sering dijawab salah.</p>
     <div class="table-wrap">
@@ -107,7 +103,7 @@
   </div>
 </div>
 
-<!-- MODAL CRUD SISWA -->
+<!-- Modal CRUD & Reset -->
 <div id="modal-student" class="modal-overlay hidden">
   <div class="modal-box">
     <div class="modal-title" id="modal-student-title">Tambah Siswa</div>
@@ -119,7 +115,7 @@
     <label style="font-size: 12px; color: #94a3b8;">Kelas</label>
     <input type="text" id="student-class" placeholder="Contoh: XI-IPA-1">
     <div id="password-field-wrap">
-      <label style="font-size: 12px; color: #94a3b8;">Password (Hanya saat tambah baru)</label>
+      <label style="font-size: 12px; color: #94a3b8;">Password</label>
       <input type="text" id="student-password" placeholder="Password awal">
     </div>
     <div style="display: flex; gap: 10px; margin-top: 20px;">
@@ -129,7 +125,6 @@
   </div>
 </div>
 
-<!-- MODAL RESET PASSWORD -->
 <div id="modal-reset" class="modal-overlay hidden">
   <div class="modal-box">
     <div class="modal-title">Reset Password</div>
@@ -143,7 +138,6 @@
   </div>
 </div>
 
-<!-- MODAL DETAIL SISWA -->
 <div id="modal-detail" class="modal-overlay hidden">
   <div class="modal-box" style="max-width: 600px;">
     <div class="modal-title">Detail Siswa</div>
@@ -221,14 +215,12 @@ function renderStudents() {
   tbody.innerHTML = filtered.map(s => {
     const totalAnswered = Number(s.total_answered) || 0;
     const hasAnswered = totalAnswered > 0;
-    
     const accVal = Number(s.accuracy) || 0;
     const timeVal = Number(s.avg_time_sec) || 0;
 
     const akurasiText = hasAnswered ? accVal + '%' : '-';
     const waktuText = hasAnswered ? timeVal + 's' : '-';
     const warnaAkurasi = hasAnswered ? (accVal >= 80 ? '#4ade80' : (accVal >= 50 ? '#fbbf24' : '#f87171')) : '#94a3b8';
-    
     const rowClass = s.isAnomaly ? 'row-anomaly' : '';
     
     let tombolBekukan = s.is_frozen 

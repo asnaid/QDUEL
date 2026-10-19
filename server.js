@@ -15,6 +15,7 @@ app.use(express.json());
 app.use(cookieParser());
 app.use(express.static('public'));
 
+// Auto-migrate kolom database
 pool.query('ALTER TABLE students ADD COLUMN IF NOT EXISTS session_token TEXT').catch(e => console.log(e.message));
 pool.query('ALTER TABLE students ADD COLUMN IF NOT EXISTS is_teacher BOOLEAN DEFAULT FALSE').catch(e => console.log(e.message));
 pool.query('ALTER TABLE students ADD COLUMN IF NOT EXISTS is_frozen BOOLEAN DEFAULT FALSE').catch(e => console.log(e.message));
@@ -145,13 +146,11 @@ app.get('/api/admin/students', async (req, res) => {
     const q = `
       SELECT 
         s.id, s.full_name, s.username, s.class_code, s.rating, s.matches_played, s.is_frozen,
-        COUNT(a.id) as total_answered,
-        COALESCE(SUM(CASE WHEN a.is_correct = 1 THEN 1 ELSE 0 END), 0) as correct,
-        COALESCE(AVG(a.time_ms), 0) as avg_time_ms
-      FROM students s
-      LEFT JOIN answers a ON s.id::text = a.student_id::text
-      WHERE s.is_teacher = FALSE
-      GROUP BY s.id, s.full_name, s.username, s.class_code, s.rating, s.matches_played, s.is_frozen
+        COALESCE((SELECT COUNT(*) FROM answers a WHERE a.student_id::text = s.id::text), 0) as total_answered,
+        COALESCE((SELECT COUNT(*) FROM answers a WHERE a.student_id::text = s.id::text AND a.is_correct = 1), 0) as correct,
+        COALESCE((SELECT AVG(a.time_ms) FROM answers a WHERE a.student_id::text = s.id::text), 0) as avg_time_ms
+      FROM students s 
+      WHERE s.is_teacher = FALSE 
       ORDER BY s.rating DESC
     `;
     const result = await pool.query(q);
@@ -178,7 +177,7 @@ app.get('/api/admin/students', async (req, res) => {
       };
     });
     res.json(processed);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/admin/students/:id/freeze', async (req, res) => {
