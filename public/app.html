@@ -363,17 +363,34 @@ document.getElementById('prof-new-username').addEventListener('blur', async (e) 
 });
 
 async function saveProfile() {
-  const newUsername = document.getElementById('prof-new-username').value;
+  const newUsername = document.getElementById('prof-new-username').value.trim();
   const newPassword = document.getElementById('prof-new-password').value;
-  if (!newUsername) return alert('Nama tidak boleh kosong');
+
+  if (!newUsername) return alert('Username tidak boleh kosong');
+  
+  if (newUsername === myProfileData.username && !newPassword) {
+    return alert('Tidak ada perubahan yang disimpan.');
+  }
+
   try {
     const r = await fetch('/api/update-profile', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
+      method: 'POST', 
+      headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ newUsername, newPassword })
     });
-    if (r.ok) { alert('Berhasil diperbarui!'); location.reload(); }
-    else alert((await r.json()).error);
-  } catch (e) { alert('Gagal menyimpan.'); }
+    
+    const res = await r.json();
+    
+    if (r.ok) { 
+      alert('Profil berhasil diperbarui!'); 
+      location.reload();
+    } else {
+      // Menampilkan pesan error asli dari server
+      alert('Gagal Menyimpan: ' + res.error); 
+    }
+  } catch (e) { 
+    alert('Terjadi kesalahan jaringan: ' + e.message); 
+  }
 }
 
 function updateHpBar(hp, elementId) {

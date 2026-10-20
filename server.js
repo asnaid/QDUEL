@@ -241,7 +241,34 @@ app.get('/api/admin/students', async (req, res) => {
     res.json(processed);
   } catch (e) { console.error(e); res.status(500).json({ error: e.message }); }
 });
+app.post('/api/update-profile', async (req, res) => {
+  const id = req.cookies.sid;
+  if (!id) return res.status(401).json({ error: 'Sesi berakhir. Silakan login ulang.' });
+  
+  const { newUsername, newPassword } = req.body;
 
+  if (!newUsername) return res.status(400).json({ error: 'Username tidak boleh kosong' });
+  if (/\s/.test(newUsername)) return res.status(400).json({ error: 'Username tidak boleh mengandung spasi' });
+
+  try {
+    const cek = await pool.query('SELECT id FROM students WHERE username=$1 AND id != $2', [newUsername, id]);
+    if (cek.rows.length > 0) return res.status(400).json({ error: 'Username sudah dipakai siswa lain' });
+
+    if (newPassword) {
+      const hash = bcrypt.hashSync(newPassword, 10);
+      await pool.query('UPDATE students SET username=$1, password_hash=$2 WHERE id=$3', [newUsername, hash, id]);
+    } else {
+      await pool.query('UPDATE students SET username=$1 WHERE id=$2', [newUsername, id]);
+    }
+    
+    res.json({ ok: true });
+  } catch (e) { 
+    // MENCETAK ERROR ASLI KE TERMINAL VS CODE
+    console.error("ERROR SAAT UPDATE PROFIL:", e); 
+    // MENGIRIM PESAN ERROR ASLI KE FRONTEND
+    res.status(500).json({ error: e.message }); 
+  }
+});
 app.post('/api/admin/students/:id/freeze', async (req, res) => {
   const { id } = req.params;
   const { frozen } = req.body;
